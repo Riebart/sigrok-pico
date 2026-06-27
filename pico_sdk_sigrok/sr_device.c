@@ -38,7 +38,7 @@ int Dprintf(const char *fmt, ...)
 // reset as part of init, or on a completed send
 void reset(sr_device_t *d)
 {
-   d->state==IDLE;
+   d->state = IDLE;  // was d->state==IDLE (comparison, not assignment)
    d->cont = 0;
    d->scnt = 0;
    // d->notfirst=false;
@@ -103,7 +103,7 @@ void tx_init(sr_device_t *d)
       }
    }
    d->d_tx_bps = (d->d_chan_cnt + 6) / 7;
-   d->state=STARTED;
+   d->state = STARTED;
 }
 // Process incoming character stream
 // Return 1 if the device rspstr has a response to send to host
@@ -135,11 +135,11 @@ int process_char(sr_device_t *d, char charin)
             rom_reset_usb_boot(0,0);
          }else{
             Dprintf("Invald bootsel command - enter \"bootsel\"\n\r");
-         } 
+         }
          ret=0;
          break;
       case 'i':
-         // SREGEN,AxxyDzz,00 - num analog, analog size, num digital,version
+         // SREGEN,AxxyDzz,00 - num analog, analog size, num digital, version
          sprintf(d->rspstr, "SRPICO,A%02d1D%02d,02", NUM_A_CHAN, NUM_D_CHAN);
          Dprintf("ID rsp %s\n\r", d->rspstr);
          ret = 1;
@@ -174,20 +174,29 @@ int process_char(sr_device_t *d, char charin)
          }
          break;
       //get analog scale
+      // Format: 'aXX' where XX is the channel number.
+      // Response is "<scale_uV>x<offset_uV>".
+      // libsigrok interprets: voltage = raw_7bit * scale_uV + offset_uV
       case 'a':
          tmpint = atoi(&(d->cmdstr[1])); // extract channel number
-         if (tmpint >= 0)
+         if ((tmpint >= 0) && (tmpint < NUM_A_CHAN))
          {
-            // scale and offset are both in integer uVolts
-            // separated by x
-            sprintf(d->rspstr, "25700x0"); // 3.3/(2^7) and 0V offset
+            #ifdef ADS1256_MODE
+            // ADS1256: gain=1, VREF=2.5V, bipolar +-2.5V full scale.
+            // 7-bit wire encoding across 5V span: 5000000/128 = 39063 uV/count
+            // Offset -2500000 uV so mid-scale (64) = 0V.
+            sprintf(d->rspstr, "%dx%d", ADS1256_SCALE_UV, ADS1256_OFFSET_UV);
+            #else
+            // Baseline internal ADC: 3.3V / 2^7 = 25781 uV/count, 0V offset
+            sprintf(d->rspstr, "25781x0");
+            #endif
             // Dprintf("ASCL%d\n\r",tmpint);
             ret = 1;
          }
          else
          {
-            Dprintf("bad ascale %s\n\r", d->cmdstr);
-            ret = 1; // this will return a '*' causing the host to fail
+            Dprintf("bad ascale channel %d cmd %s\n\r", tmpint, d->cmdstr);
+            ret = 1; // returns '*' causing the host to flag an error
          }
          break;
       case 'F': // fixed set of samples
@@ -234,9 +243,9 @@ int process_char(sr_device_t *d, char charin)
          Dprintf("Pre-trigger samples %d cmd %s\n\r", tmpint, d->cmdstr);
          ret = 1;
          break;
-      //Enable/disable Analog channel   
+      //Enable/disable Analog channel
       // format is Axyy where x is 0 for disabled, 1 for enabled and yy is channel #
-      case 'A':                          
+      case 'A':
          tmpint = d->cmdstr[1] - '0';     // extract enable value
          tmpint2 = atoi(&(d->cmdstr[2])); // extract channel number
          if ((tmpint >= 0) && (tmpint <= 1) && (tmpint2 >= 0) && (tmpint2 <= 31))
@@ -288,19 +297,25 @@ int process_char(sr_device_t *d, char charin)
             #ifdef BASE_MODE //D0-20 are GP2..GP22
                tmpint2=tmpint+2;
             #elif DIG_26_MODE //D0-D22,D23-D25 are GP0..GP22,GP26..GP28
-               tmpint2=(tmpint<=22) ? tmpint : tmpint+3; 
-            #else //DIG_32_MODE and all else are direct mapped.
+               tmpint2=(tmpint<=22) ? tmpint : tmpint+3;
+            #else //DIG_32_MODE, ADS1256_MODE and all else are direct mapped.
                tmpint2=tmpint;
             #endif
             Dprintf("NameD %c %d %d\n\r", d->cmdstr[1],tmpint,tmpint2);
             sprintf(d->rspstr, "GP%d",tmpint2);
-            ret=1;            
-          } else  if(d->cmdstr[1]=='A'){
+            ret=1;
+          } else if(d->cmdstr[1]=='A'){
+            #ifdef ADS1256_MODE
+            // ADS1256 channels are single-ended AIN0..AIN7 (MUX AINP vs AINCOM)
+            Dprintf("NameA ADS1256 ch %d\n\r", tmpint);
+            sprintf(d->rspstr, "ADS1256_CH%d", tmpint);
+            #else
             //ADC0/1/2 are GP26,27,28
             tmpint2=tmpint+26;
             Dprintf("NameA %c %d %d\n\r", d->cmdstr[1],tmpint,tmpint2);
             sprintf(d->rspstr, "ADC%d_GP%d",tmpint,tmpint2);
-            ret=1;            
+            #endif
+            ret=1;
           } else{
             ret=0;
           }
