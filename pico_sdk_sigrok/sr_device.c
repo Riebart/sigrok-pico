@@ -139,7 +139,8 @@ int process_char(sr_device_t *d, char charin)
          ret=0;
          break;
       case 'i':
-         // SREGEN,AxxyDzz,00 - num analog, analog size, num digital, version
+         // SRPICO,Axx1Dyy,zz - num analog, analog size (wire bytes per sample), num digital, version
+         // For ADS1256_MODE we report 8 analog channels and 0 digital
          sprintf(d->rspstr, "SRPICO,A%02d1D%02d,02", NUM_A_CHAN, NUM_D_CHAN);
          Dprintf("ID rsp %s\n\r", d->rspstr);
          ret = 1;
