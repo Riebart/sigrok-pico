@@ -41,17 +41,8 @@ void reset(sr_device_t *d)
    d->state==IDLE;
    d->cont = 0;
    d->scnt = 0;
-   // d->notfirst=false;
-   // Set triggered by default so that we don't check for HW triggers
-   // unless the driver sends a trigger command
-   // d->triggered=true;
-   // d->tlval=0;
-   // d->lvl0mask=0;
-   // d->lvl1mask=0;
-   // d->risemask=0;
-   // d->fallmask=0;
-   // d->chgmask=0;
 };
+
 // initial post reset state
 void init(sr_device_t *d)
 {
@@ -64,11 +55,9 @@ void init(sr_device_t *d)
    d->d_nps = 0;
    d->cmdstrptr = 0;
 }
+
 void tx_init(sr_device_t *d)
 {
-   // A reset should have already been called to restart the device.
-   // An additional one here would clear trigger and other state that had been updated
-   //     reset(d);
    d->a_chan_cnt = 0;
    for (int i = 0; i < NUM_A_CHAN; i++)
    {
@@ -78,33 +67,27 @@ void tx_init(sr_device_t *d)
       }
    }
    // Nibbles per slice controls how PIO digital data is stored
-   // Only support 0,1,2,4 or 8, which use 0,4,8,16 or 32 bits of PIO fifo data
-   // per sample clock.
    d->d_nps = (d->d_mask & 0xF) ? 1 : 0;
    d->d_nps = (d->d_mask & 0xF0) ? (d->d_nps) + 1 : d->d_nps;
    d->d_nps = (d->d_mask & 0xFF00) ? (d->d_nps) + 2 : d->d_nps;
    d->d_nps = (d->d_mask & 0xFFFF0000) ? (d->d_nps) + 4 : d->d_nps;
-   // Dealing with samples on a per nibble, rather than per byte basis in non D4 mode
-   // creates a bunch of annoying special cases, so forcing non D4 mode to always store a minimum
-   // of 8 bits.
    if ((d->d_nps == 1) && (d->a_chan_cnt > 0))
    {
       d->d_nps = 2;
    }
 
-   // Digital channels must enable from bottom and go up, but that is checked by the host
    d->d_chan_cnt = 0;
    for (int i = 0; i < NUM_D_CHAN; i++)
    {
       if (((d->d_mask) >> i) & 1)
       {
-         //    Dprintf("i %d inv %d mask %X\n\r",i,invld,d->d_mask);
          d->d_chan_cnt++;
       }
    }
    d->d_tx_bps = (d->d_chan_cnt + 6) / 7;
    d->state=STARTED;
 }
+
 // Process incoming character stream
 // Return 1 if the device rspstr has a response to send to host
 // Be sure that rspstr does not have \n  or \r.
@@ -126,30 +109,40 @@ int process_char(sr_device_t *d, char charin)
       d->cmdstr[d->cmdstrptr] = 0;
       switch (d->cmdstr[0])
       {
-      //Enter boot_sel_mode. Require a long string to prevent accidental reboots
       case 'b':
          if(!strcmp(d->cmdstr,"bootsel")){
             Dprintf("Entering Bootsel mode\n\r");
             sleep_ms(1000);
-            //reset with inputs per cold boot
             rom_reset_usb_boot(0,0);
          }else{
             Dprintf("Invald bootsel command - enter \"bootsel\"\n\r");
-         } 
+         }
          ret=0;
          break;
+
       case 'i':
-         // SREGEN,AxxyDzz,00 - num analog, analog size, num digital,version
+         // SRPICO,AxxyDzz,00
+         // xx  = number of analog channels (NUM_A_CHAN)
+         // y   = bytes per analog sample on the wire (asize):
+         //         1 for onboard ADC (7-bit, baseline mode)
+         //         ADS1256_A_BYTES (3) for ADS1256 mode (21-bit, 3x7-bit)
+         // zz  = number of digital channels (NUM_D_CHAN)
+         // ,02 = firmware version
+#ifdef ADS1256_MODE
+         sprintf(d->rspstr, "SRPICO,A%02d%dD%02d,02",
+                 NUM_A_CHAN, ADS1256_A_BYTES, NUM_D_CHAN);
+#else
          sprintf(d->rspstr, "SRPICO,A%02d1D%02d,02", NUM_A_CHAN, NUM_D_CHAN);
+#endif
          Dprintf("ID rsp %s\n\r", d->rspstr);
          ret = 1;
          break;
+
       case 'R':
          tmpint = atol(&(d->cmdstr[1]));
          if ((tmpint >= 5000) && (tmpint <= 120000016))
-         { // Add 16 to support cfg_bits
+         {
             d->sample_rate = tmpint;
-            // Dprintf("SMPRATE= %u\n\r",d->sample_rate);
             ret = 1;
          }
          else
@@ -158,13 +151,12 @@ int process_char(sr_device_t *d, char charin)
             ret = 0;
          }
          break;
-      // sample limit
+
       case 'L':
          tmpint = atol(&(d->cmdstr[1]));
          if (tmpint > 0)
          {
             d->num_samples = tmpint;
-            // Dprintf("NUMSMP=%u\n\r",d->num_samples);
             ret = 1;
          }
          else
@@ -173,77 +165,73 @@ int process_char(sr_device_t *d, char charin)
             ret = 0;
          }
          break;
-      //get analog scale
+
+      // get analog scale
+      // Format response: "<scale_uV>x<offset_uV>"
+      // scale_uV and offset_uV are integers, as expected by the
+      // libsigrok raspberrypi-pico driver which divides by 1e6 to get volts.
       case 'a':
          tmpint = atoi(&(d->cmdstr[1])); // extract channel number
          if (tmpint >= 0)
          {
-            // scale and offset are both in integer uVolts
-            // separated by x
+#ifdef ADS1256_MODE
+            // Scale and offset are computed at compile time from:
+            //   ADS1256_PGA_GAIN  (default 1, can be 1/2/4/8/16/32/64)
+            //   ADS1256_BUF_ENABLE (default 1; buffer state does not change
+            //                       the full-scale span when VREF is external)
+            //   ADS1256_VREF_UV   (2500000 uV = 2.5 V)
+            //   ADS1256_A_RSHIFT  (3 bits dropped from 24-bit result)
+            //   Denominator       (2^20 = 1048576 counts for 21-bit range)
+            // All channels share the same scale/offset in single-ended mode.
+            sprintf(d->rspstr, "%ldx%ld",
+                    (long)ADS1256_SCALE_UV,
+                    (long)ADS1256_OFFSET_UV);
+#else
             sprintf(d->rspstr, "25700x0"); // 3.3/(2^7) and 0V offset
-            // Dprintf("ASCL%d\n\r",tmpint);
+#endif
+            Dprintf("ASCL%d rsp %s\n\r", tmpint, d->rspstr);
             ret = 1;
          }
          else
          {
             Dprintf("bad ascale %s\n\r", d->cmdstr);
-            ret = 1; // this will return a '*' causing the host to fail
+            ret = 1; // returns '*' causing the host to fail on bad channel
          }
          break;
-      case 'F': // fixed set of samples
+
+      case 'F':
          Dprintf("STRT_FIX\n\r");
          tx_init(d);
          d->cont = 0;
          ret = 0;
          break;
-      case 'C': // continous mode
+
+      case 'C':
          tx_init(d);
          d->cont = 1;
          Dprintf("STRT_CONT\n\r");
          ret = 0;
          break;
-      case 't': // trigger -format tvxx where v is value and xx is two digit channel
-         /*HW trigger depracated
-             tmpint=d->cmdstr[1]-'0';
-                  tmpint2=atoi(&(d->cmdstr[2])); //extract channel number which starts at D2
-             //Dprintf("Trigger input %d val %d\n\r",tmpint2,tmpint);
-                  if((tmpint2>=2)&&(tmpint>=0)&&(tmpint<=4)){
-                    d->triggered=false;
-                    switch(tmpint){
-                 case 0: d->lvl0mask|=1<<(tmpint2-2);break;
-                 case 1: d->lvl1mask|=1<<(tmpint2-2);break;
-                 case 2: d->risemask|=1<<(tmpint2-2);break;
-                 case 3: d->fallmask|=1<<(tmpint2-2);break;
-                 default: d->chgmask|=1<<(tmpint2-2);break;
-               }
-                    //Dprintf("Trigger channel %d val %d 0x%X\n\r",tmpint2,tmpint,d->lvl0mask);
-               //Dprintf("LVL0mask 0x%X\n\r",d->lvl0mask);
-                    //Dprintf("LVL1mask 0x%X\n\r",d->lvl1mask);
-                    //Dprintf("risemask 0x%X\n\r",d->risemask);
-                    //Dprintf("fallmask 0x%X\n\r",d->fallmask);
-                    //Dprintf("edgemask 0x%X\n\r",d->chgmask);
-                  }else{
-               Dprintf("bad trigger channel %d val %d\n\r",tmpint2,tmpint);
-                    d->triggered=true;
-                  }
-         */
+
+      case 't':
          ret = 1;
          break;
-      case 'p': // pretrigger count
+
+      case 'p':
          tmpint = atoi(&(d->cmdstr[1]));
          Dprintf("Pre-trigger samples %d cmd %s\n\r", tmpint, d->cmdstr);
          ret = 1;
          break;
-      //Enable/disable Analog channel   
-      // format is Axyy where x is 0 for disabled, 1 for enabled and yy is channel #
-      case 'A':                          
-         tmpint = d->cmdstr[1] - '0';     // extract enable value
-         tmpint2 = atoi(&(d->cmdstr[2])); // extract channel number
+
+      // Enable/disable analog channel
+      // format is Axyy where x is 0/1 and yy is channel number
+      case 'A':
+         tmpint = d->cmdstr[1] - '0';
+         tmpint2 = atoi(&(d->cmdstr[2]));
          if ((tmpint >= 0) && (tmpint <= 1) && (tmpint2 >= 0) && (tmpint2 <= 31))
          {
             d->a_mask = d->a_mask & ~(1 << tmpint2);
             d->a_mask = d->a_mask | (tmpint << tmpint2);
-            // Dprintf("A%d EN %d Msk 0x%X\n\r",tmpint2,tmpint,d->a_mask);
             ret = 1;
          }
          else
@@ -251,17 +239,17 @@ int process_char(sr_device_t *d, char charin)
             ret = 0;
          }
          break;
-      //Enable/disable digital channel.
-      // format is Dxyy where x is 0 for disabled, 1 for enabled and yy is channel #
-      //Note that this is a fixed number 0..N regardless of channel naming and/or pins enabled
-      case 'D':                           /// enable digital channel always a set
-         tmpint = d->cmdstr[1] - '0';     // extract enable value
-         tmpint2 = atoi(&(d->cmdstr[2])); // extract channel number
+
+      // Enable/disable digital channel
+      // format is Dxyy where x is 0/1 and yy is channel number
+      case 'D':
+         tmpint = d->cmdstr[1] - '0';
+         tmpint2 = atoi(&(d->cmdstr[2]));
          if ((tmpint >= 0) && (tmpint <= 1) && (tmpint2 >= 0) && (tmpint2 <= 31))
          {
             d->d_mask = d->d_mask & ~(1 << tmpint2);
             d->d_mask = d->d_mask | (tmpint << tmpint2);
-            Dprintf("D%d EN %d Msk 0x%X\n\r",tmpint2,tmpint,d->d_mask);
+            Dprintf("D%d EN %d Msk 0x%X\n\r", tmpint2, tmpint, d->d_mask);
             ret = 1;
          }
          else
@@ -269,51 +257,49 @@ int process_char(sr_device_t *d, char charin)
             ret = 0;
          }
          break;
-      //Get signal name.  The name can only be pulled from the device, there is no
-      //set because the device has no use for the names.  Between the host and device
-      //the names are always 0..N for all types, but this mode allows the PIN/board/device
-      //names to be communicated.
-      //format is n(A/D)xx where A/D selects analog digital, and x is one or two characters representing an integer
-      //Note: this functional call may return names for channels that don't exist.  It's up
-      //to the caller to only ask for names for channels reported in the identify
+
+      // Get signal name
+      // format: n(A/D)xx
       case 'n':
-          tmpint=atoi(&(d->cmdstr[2]));
-          //Dprintf("Name %c %d \n\r", d->cmdstr[1],tmpint);
-          if(d->cmdstr[1]=='D'){
-//On standard PICO and PICO2
-//GP0-22 are continous, and then GP26,27,28
-//So in basemode, D0-D20 are GP2..GP22
-//in dig_26_mode D0-D22,D23-D25 are GP0..GP22,GP26..GP28
-//in dig_32_mode D0-D31 are GP0..GP31
-            #ifdef BASE_MODE //D0-20 are GP2..GP22
-               tmpint2=tmpint+2;
-            #elif DIG_26_MODE //D0-D22,D23-D25 are GP0..GP22,GP26..GP28
-               tmpint2=(tmpint<=22) ? tmpint : tmpint+3; 
-            #else //DIG_32_MODE and all else are direct mapped.
-               tmpint2=tmpint;
-            #endif
-            Dprintf("NameD %c %d %d\n\r", d->cmdstr[1],tmpint,tmpint2);
-            sprintf(d->rspstr, "GP%d",tmpint2);
-            ret=1;            
-          } else  if(d->cmdstr[1]=='A'){
-            //ADC0/1/2 are GP26,27,28
-            tmpint2=tmpint+26;
-            Dprintf("NameA %c %d %d\n\r", d->cmdstr[1],tmpint,tmpint2);
-            sprintf(d->rspstr, "ADC%d_GP%d",tmpint,tmpint2);
-            ret=1;            
-          } else{
-            ret=0;
+          tmpint = atoi(&(d->cmdstr[2]));
+          if (d->cmdstr[1] == 'D') {
+#ifdef ADS1256_MODE
+             // D0-D15 map directly to GP0-GP15
+             tmpint2 = tmpint;
+#elif defined(BASE_MODE)
+             tmpint2 = tmpint + 2; // D0-D20 are GP2..GP22
+#elif defined(DIG_26_MODE)
+             tmpint2 = (tmpint <= 22) ? tmpint : tmpint + 3;
+#else  // DIG_32_MODE
+             tmpint2 = tmpint;
+#endif
+             Dprintf("NameD %c %d %d\n\r", d->cmdstr[1], tmpint, tmpint2);
+             sprintf(d->rspstr, "GP%d", tmpint2);
+             ret = 1;
+          } else if (d->cmdstr[1] == 'A') {
+#ifdef ADS1256_MODE
+             // AIN0-AIN7 single-ended vs AINCOM
+             sprintf(d->rspstr, "AIN%d", tmpint);
+#else
+             tmpint2 = tmpint + 26;
+             sprintf(d->rspstr, "ADC%d_GP%d", tmpint, tmpint2);
+#endif
+             Dprintf("NameA %c %d\n\r", d->cmdstr[1], tmpint);
+             ret = 1;
+          } else {
+             ret = 0;
           }
           break;
+
       default:
          Dprintf("bad command %s\n\r", d->cmdstr);
          ret = 0;
-      } // case
-      //        Dprintf("CmdDone %s\n\r",d->cmdstr);
+      } // switch
       d->cmdstrptr = 0;
    }
-   else // no CR/LF
-   { if (d->cmdstrptr >= 19)
+   else // no CR/LF yet
+   {
+      if (d->cmdstrptr >= 19)
       {
          d->cmdstr[18] = 0;
          Dprintf("Command overflow %s\n\r", d->cmdstr);
@@ -321,7 +307,6 @@ int process_char(sr_device_t *d, char charin)
       }
       d->cmdstr[d->cmdstrptr++] = charin;
       ret = 0;
-   } // else no CR/LF
-   // default return 0 means to not send any kind of response
+   }
    return ret;
 } // process_char
