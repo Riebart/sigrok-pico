@@ -1,0 +1,254 @@
+# =============================================================================
+# .github/workflows/build-firmware.yml
+#
+# Builds the sigrok-pico firmware with ADS1256 support for the RP2040 and
+# publishes a GitHub Release with the .uf2 and .elf files attached.
+#
+# Triggers:
+#   • Push a tag like "v1.2.3"  → full build + publish release
+#   • Manual dispatch           → build + publish release with custom version
+#   • Push / PR to main/develop → build-only (no release), uploads artifact
+# =============================================================================
+
+name: Build sigrok-pico ADS1256 Firmware
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]*"   # e.g. v1.0.0, v2.3.1-beta
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (e.g. v1.0.0)"
+        required: true
+        default: "v0.0.1"
+      pico_board:
+        description: "PICO_BOARD target"
+        required: true
+        default: "pico"
+        type: choice
+        options:
+          - pico
+          - pico_w
+          - pico2
+      pico_sdk_tag:
+        description: "Pico SDK version tag"
+        required: false
+        default: "2.1.1"
+      draft_release:
+        description: "Publish as draft release?"
+        required: false
+        default: "false"
+        type: boolean
+
+# ─── Global env ──────────────────────────────────────────────────────────────
+env:
+  PICO_SDK_TAG: ${{ github.event.inputs.pico_sdk_tag || '2.1.1' }}
+  PICO_BOARD:   ${{ github.event.inputs.pico_board   || 'pico'  }}
+  BUILD_TYPE:   Release
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Build firmware
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build (${{ github.event.inputs.pico_board || 'pico' }})
+    runs-on: ubuntu-24.04
+
+    outputs:
+      # Pass artifact name to the release job
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      version:        ${{ steps.meta.outputs.version }}
+
+    steps:
+      # ── 1. Checkout your sigrok-pico ADS1256 repository ──────────────────
+      - name: Checkout firmware source
+        uses: actions/checkout@v4
+        with:
+          path: sigrok-pico
+
+      # ── 2. Checkout Pico SDK at pinned version ────────────────────────────
+      - name: Checkout Pico SDK ${{ env.PICO_SDK_TAG }}
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: ${{ env.PICO_SDK_TAG }}
+          path: pico-sdk
+          submodules: recursive   # pulls tinyusb, lwIP, etc.
+
+      # ── 3. Install toolchain dependencies ────────────────────────────────
+      - name: Install ARM cross-compiler & build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            libstdc++-arm-none-eabi-newlib \
+            python3 \
+            build-essential
+
+      # ── 4. Verify cross-compiler is available ────────────────────────────
+      - name: Verify ARM toolchain
+        run: arm-none-eabi-gcc --version
+
+      # ── 5. Copy pico_sdk_import.cmake (required for out-of-tree builds) ──
+      - name: Copy pico_sdk_import.cmake
+        run: |
+          cp pico-sdk/external/pico_sdk_import.cmake \
+             sigrok-pico/pico_sdk_sigrok/pico_sdk_import.cmake
+
+      # ── 6. Build metadata (version string for artefact naming) ───────────
+      - name: Resolve version and artifact name
+        id: meta
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # branch build — use short SHA
+            VERSION="dev-$(git -C sigrok-pico rev-parse --short HEAD)"
+          fi
+          ARTIFACT="sigrok-pico-ads1256-${VERSION}-${{ env.PICO_BOARD }}"
+          echo "version=${VERSION}"        >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "Version  : ${VERSION}"
+          echo "Artifact : ${ARTIFACT}"
+
+      # ── 7. CMake configure ────────────────────────────────────────────────
+      - name: Configure CMake
+        working-directory: sigrok-pico/pico_sdk_sigrok
+        env:
+          PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+        run: |
+          cmake -B build \
+                -DPICO_BOARD=${{ env.PICO_BOARD }} \
+                -DPICO_SDK_PATH="${PICO_SDK_PATH}" \
+                -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+                -G Ninja
+
+      # ── 8. Compile ────────────────────────────────────────────────────────
+      - name: Build firmware
+        working-directory: sigrok-pico/pico_sdk_sigrok
+        run: ninja -C build -j$(nproc)
+
+      # ── 9. Collect firmware files ─────────────────────────────────────────
+      - name: Collect firmware artefacts
+        id: collect
+        working-directory: sigrok-pico/pico_sdk_sigrok/build
+        run: |
+          mkdir -p staging
+
+          # Copy all .uf2 files
+          find . -name "*.uf2" -exec cp {} staging/ \;
+          # Copy all .elf files (useful for debugging with OpenOCD/GDB)
+          find . -name "*.elf" -exec cp {} staging/ \;
+          # Copy map files (optional — comment out to reduce artifact size)
+          find . -name "*.map" -exec cp {} staging/ \;
+
+          echo "--- Firmware artefacts ---"
+          ls -lh staging/
+
+          # Fail early if nothing was produced
+          uf2_count=$(find staging -name "*.uf2" | wc -l)
+          if [[ "${uf2_count}" -eq 0 ]]; then
+            echo "::error::No .uf2 files found after build!"
+            exit 1
+          fi
+
+          echo "uf2_count=${uf2_count}" >> "$GITHUB_OUTPUT"
+
+      # ── 10. Upload artefacts (available on every run for manual download) ─
+      - name: Upload firmware artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: sigrok-pico/pico_sdk_sigrok/build/staging/
+          if-no-files-found: error
+          retention-days: 30
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Publish GitHub Release
+  # Only runs on a version tag push  OR  a manual workflow_dispatch
+  # ═══════════════════════════════════════════════════════════════════════════
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+
+    # Only publish when triggered by a tag push or manual dispatch
+    if: |
+      (github.event_name == 'push' && github.ref_type == 'tag') ||
+      github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write   # required to create/edit releases
+
+    steps:
+      # ── 1. Download firmware artefact from the build job ─────────────────
+      - name: Download firmware artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: release-files/
+
+      # ── 2. List what we're about to release ──────────────────────────────
+      - name: Show release files
+        run: ls -lh release-files/
+
+      # ── 3. Build the release notes body ──────────────────────────────────
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          BOARD="${{ env.PICO_BOARD }}"
+          SDK="${{ env.PICO_SDK_TAG }}"
+          COMMIT="${{ github.sha }}"
+          SHORT_SHA="${COMMIT:0:7}"
+
+          cat << NOTES > release_notes.md
+          ## sigrok-pico ADS1256 Firmware — ${VERSION}
+
+          Built from commit [${SHORT_SHA}](https://github.com/${{ github.repository }}/commit/${COMMIT})
+          targeting **${BOARD}** with **Pico SDK ${SDK}**.
+
+          ### Files
+          | File | Description |
+          |---|---|
+          | \`*.uf2\` | Flash by drag-and-drop onto the Pico in BOOTSEL mode |
+          | \`*.elf\` | ELF binary for debugging with OpenOCD / GDB |
+          | \`*.map\` | Linker map (symbol reference) |
+
+          ### Flashing instructions
+          1. Hold **BOOTSEL** on the Pico while plugging in USB — a drive called **RPI-RP2** appears.
+          2. Drag and drop the \`.uf2\` file onto that drive.
+          3. The Pico reboots automatically into the new firmware.
+
+          Or use **picotool**:
+          \`\`\`
+          picotool load sigrok_pico_ads1256.uf2 -f
+          \`\`\`
+          NOTES
+
+      # ── 4. Create the release and upload files ────────────────────────────
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag:               ${{ needs.build.outputs.version }}
+          name:              "sigrok-pico ADS1256 ${{ needs.build.outputs.version }}"
+          bodyFile:          release_notes.md
+          artifacts:         "release-files/*"
+          artifactErrorsFailBuild: true
+          draft:             ${{ github.event.inputs.draft_release == 'true' || false }}
+          prerelease:        ${{ contains(needs.build.outputs.version, '-') }}
+          allowUpdates:      true   # safe to re-run the same tag
+          token:             ${{ secrets.GITHUB_TOKEN }}
