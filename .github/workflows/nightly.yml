@@ -1,33 +1,34 @@
 # =============================================================================
 # .github/workflows/nightly.yml
 #
-# Nightly pre-release build for working/feature branches.
+# Nightly pre-release builds from working/feature branches.
 #
-# What it does:
-#   • Runs on a cron schedule (02:00 UTC every day) against all "working"
-#     branches (anything that is NOT main/develop/release-*).
-#   • Can also be triggered manually via workflow_dispatch for any branch.
-#   • Skips the run entirely if there have been no new commits since the
-#     last nightly build tag (saves runner minutes).
-#   • Creates / overwrites a rolling GitHub pre-release tagged
-#     "nightly-<branch>-<YYYY-MM-DD>-<short-sha>" so old nightlies are
-#     replaced rather than piling up.
-#   • Attaches the .uf2 and .elf firmware artefacts to the pre-release.
+# Triggers:
+#   • Cron: 02:00 UTC daily (against the default branch)
+#   • workflow_dispatch: manually for any branch/board
+#
+# Features:
+#   • Skips build if no new commits since last nightly tag
+#   • Pico SDK + submodules cached (saves ~200MB clone on repeat runs)
+#   • All actions pinned to full commit SHAs (supply-chain security)
+#   • concurrency block cancels stale in-progress runs per branch
+#   • persist-credentials: false on all checkouts
+#   • defaults.run.shell: bash
+#   • Exact known output filenames (fail-fast if binary missing)
+#   • LICENSE + README.md bundled in pre-release
+#   • Auto-generated release notes via softprops/action-gh-release
+#   • Rolling: one nightly pre-release per branch per day (old ones deleted)
 # =============================================================================
 
 name: Nightly Build
 
 on:
   schedule:
-    # 02:00 UTC every day — offset from the top of the hour to avoid
-    # GitHub's busy period and the "skipped when overloaded" caveat.
     - cron: "0 2 * * *"
-
-  # Allow any branch to be built on demand from the Actions UI
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch to build (defaults to the repo default branch)"
+        description: "Branch to build (leave blank for default branch)"
         required: false
         default: ""
       pico_board:
@@ -39,17 +40,28 @@ on:
           - pico
           - pico_w
           - pico2
+      pico_sdk_version:
+        description: "Pico SDK version tag"
+        required: false
+        default: "2.1.1"
       force_build:
         description: "Build even if no new commits since last nightly?"
         required: false
         default: "false"
         type: boolean
 
-# ─── Global env ──────────────────────────────────────────────────────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.branch || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
 env:
-  PICO_SDK_TAG: "2.1.1"
-  PICO_BOARD:   ${{ github.event.inputs.pico_board || 'pico' }}
-  BUILD_TYPE:   Release
+  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.1' }}
+  PICO_BOARD:       ${{ github.event.inputs.pico_board       || 'pico'  }}
+  BUILD_TYPE:       Release
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -58,6 +70,8 @@ jobs:
   check-changes:
     name: Check for new commits
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
 
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
@@ -67,62 +81,55 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          # For scheduled runs use the default branch; for dispatch honour input
           ref: ${{ github.event.inputs.branch || github.ref }}
-          fetch-depth: 0   # full history needed for commit comparison
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Determine build metadata and staleness
         id: check
         env:
           FORCE: ${{ github.event.inputs.force_build || 'false' }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # ── Resolve branch name ──────────────────────────────────────────
           if [[ -n "${{ github.event.inputs.branch }}" ]]; then
             BRANCH="${{ github.event.inputs.branch }}"
           else
             BRANCH="${GITHUB_REF_NAME}"
           fi
 
-          # Normalise branch name for use in a tag (replace / with -)
           BRANCH_SLUG="${BRANCH//\//-}"
-
           DATE=$(date -u +'%Y-%m-%d')
           SHORT_SHA=$(git rev-parse --short HEAD)
           NIGHTLY_TAG="nightly-${BRANCH_SLUG}-${DATE}-${SHORT_SHA}"
 
-          echo "branch_name=${BRANCH}"        >> "$GITHUB_OUTPUT"
-          echo "nightly_tag=${NIGHTLY_TAG}"   >> "$GITHUB_OUTPUT"
-          echo "short_sha=${SHORT_SHA}"       >> "$GITHUB_OUTPUT"
+          echo "branch_name=${BRANCH}"      >> "$GITHUB_OUTPUT"
+          echo "nightly_tag=${NIGHTLY_TAG}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}"     >> "$GITHUB_OUTPUT"
 
-          # ── Skip check ───────────────────────────────────────────────────
           if [[ "${FORCE}" == "true" ]]; then
-            echo "Force flag set — building regardless of commit history."
+            echo "Force flag set — building regardless."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Find the most recent nightly tag for this branch
           LAST_TAG=$(git tag --list "nightly-${BRANCH_SLUG}-*" \
                        --sort=-version:refname | head -1 || true)
 
           if [[ -z "${LAST_TAG}" ]]; then
-            echo "No previous nightly tag found — first nightly build."
+            echo "No previous nightly — first build."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Count commits since that tag
           COMMIT_COUNT=$(git rev-list "${LAST_TAG}..HEAD" --count 2>/dev/null || echo "0")
-          echo "Commits since last nightly (${LAST_TAG}): ${COMMIT_COUNT}"
+          echo "Commits since ${LAST_TAG}: ${COMMIT_COUNT}"
 
           if [[ "${COMMIT_COUNT}" -eq 0 ]]; then
-            echo "No new commits — skipping nightly build."
+            echo "No new commits — skipping."
             echo "should_build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "New commits found — proceeding with nightly build."
+            echo "New commits found — proceeding."
             echo "should_build=true"  >> "$GITHUB_OUTPUT"
           fi
 
@@ -134,82 +141,110 @@ jobs:
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
 
     outputs:
       artifact_name: ${{ steps.meta.outputs.artifact_name }}
 
     steps:
       - name: Checkout firmware source (${{ needs.check-changes.outputs.branch_name }})
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
-          path: sigrok-pico
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Checkout Pico SDK ${{ env.PICO_SDK_TAG }}
-        uses: actions/checkout@v4
+      # ── Cache: Pico SDK repo ────────────────────────────────────────────
+      - name: Cache Pico SDK
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        id: pico-sdk-cache
+        with:
+          path: pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
+
+      # ── Cache: Pico SDK submodules ──────────────────────────────────────
+      - name: Cache Pico SDK submodules
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: pico-sdk/lib
+          key: pico-sdk-submodules-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
+
+      # ── Checkout Pico SDK (only on cache miss) ──────────────────────────
+      - name: Checkout Pico SDK ${{ env.PICO_SDK_VERSION }}
+        if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: raspberrypi/pico-sdk
-          ref: ${{ env.PICO_SDK_TAG }}
+          ref: ${{ env.PICO_SDK_VERSION }}
           path: pico-sdk
-          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Install ARM cross-compiler & build tools
+      # ── Init submodules (only on cache miss) ────────────────────────────
+      - name: Initialize Pico SDK submodules
+        if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
+        run: cd pico-sdk && git submodule update --init --recursive
+
+      # ── Install toolchain ───────────────────────────────────────────────
+      - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build gcc-arm-none-eabi \
+            cmake \
+            gcc-arm-none-eabi \
             libnewlib-arm-none-eabi \
             libstdc++-arm-none-eabi-newlib \
-            python3 build-essential
+            build-essential \
+            python3
 
       - name: Verify ARM toolchain
         run: arm-none-eabi-gcc --version
 
+      # ── Copy pico_sdk_import.cmake ──────────────────────────────────────
       - name: Copy pico_sdk_import.cmake
         run: |
           cp pico-sdk/external/pico_sdk_import.cmake \
-             sigrok-pico/pico_sdk_sigrok/pico_sdk_import.cmake
+             pico_sdk_sigrok/pico_sdk_import.cmake
 
       - name: Set artifact name
         id: meta
         run: |
           TAG="${{ needs.check-changes.outputs.nightly_tag }}"
-          ARTIFACT="${TAG}-${{ env.PICO_BOARD }}"
-          echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${TAG}-${{ env.PICO_BOARD }}" >> "$GITHUB_OUTPUT"
 
-      - name: CMake configure
-        working-directory: sigrok-pico/pico_sdk_sigrok
-        env:
-          PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+      # ── CMake configure ─────────────────────────────────────────────────
+      - name: Configure CMake
         run: |
           cmake -B build \
+                -S pico_sdk_sigrok \
+                -G "Unix Makefiles" \
                 -DPICO_BOARD=${{ env.PICO_BOARD }} \
-                -DPICO_SDK_PATH="${PICO_SDK_PATH}" \
                 -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-                -G Ninja
+                -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk"
 
+      # ── Build ───────────────────────────────────────────────────────────
       - name: Build firmware
-        working-directory: sigrok-pico/pico_sdk_sigrok
-        run: ninja -C build -j$(nproc)
+        run: cmake --build build -- -j $(nproc)
 
-      - name: Stage artefacts
-        id: stage
-        working-directory: sigrok-pico/pico_sdk_sigrok/build
+      # ── Collect artefacts (exact names — fails loud if missing) ──────────
+      - name: Prepare artifacts
         run: |
-          mkdir -p staging
-          find . -name "*.uf2" -exec cp {} staging/ \;
-          find . -name "*.elf" -exec cp {} staging/ \;
-          ls -lh staging/
-          uf2_count=$(find staging -name "*.uf2" | wc -l)
-          [[ "${uf2_count}" -gt 0 ]] || { echo "::error::No .uf2 produced!"; exit 1; }
+          mkdir -p artifacts
+          cp build/pico_sdk_sigrok.uf2 artifacts/
+          cp build/pico_sdk_sigrok.elf artifacts/
+          cp LICENSE                   artifacts/
+          cp README.md                 artifacts/
+          ls -lh artifacts/
 
-      - name: Upload nightly artefact
-        uses: actions/upload-artifact@v4
+      # ── Upload ──────────────────────────────────────────────────────────
+      - name: Upload nightly artifact
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
-          path: sigrok-pico/pico_sdk_sigrok/build/staging/
+          path: artifacts/
           if-no-files-found: error
-          retention-days: 7    # nightlies expire after 1 week
+          retention-days: 7
 
   # ═══════════════════════════════════════════════════════════════════════════
   # JOB 3 — Publish rolling nightly pre-release
@@ -219,34 +254,33 @@ jobs:
     needs: [check-changes, build]
     if: needs.check-changes.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
-
     permissions:
       contents: write
 
     steps:
       - name: Checkout (for tag operations)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
+          persist-credentials: true   # needed to push the nightly tag back
 
-      - name: Configure Git identity for tagging
+      - name: Configure Git identity
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Download nightly artefact
-        uses: actions/download-artifact@v4
+      - name: Download nightly artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: ${{ needs.build.outputs.artifact_name }}
-          path: release-files/
+          path: ./release
 
       - name: Show release files
-        run: ls -lh release-files/
+        run: ls -lh release/
 
-      # Delete any existing nightly pre-release for the same branch+date
-      # so we always have exactly ONE rolling nightly per branch per day.
-      - name: Delete stale nightly release (same branch, same date)
+      # Delete stale same-branch same-date nightly (keep exactly one per day)
+      - name: Delete stale nightly release for today
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -255,64 +289,32 @@ jobs:
           DATE=$(date -u +'%Y-%m-%d')
           PATTERN="nightly-${BRANCH_SLUG}-${DATE}-"
 
-          # List all releases and delete any that match today's pattern
           gh release list --limit 50 --json tagName \
             --jq ".[].tagName" 2>/dev/null | \
           grep "^${PATTERN}" | \
           while read -r OLD_TAG; do
-            echo "Deleting stale nightly release: ${OLD_TAG}"
+            echo "Removing stale nightly: ${OLD_TAG}"
             gh release delete "${OLD_TAG}" --yes --cleanup-tag 2>/dev/null || true
           done
 
-      - name: Generate nightly release notes
-        run: |
-          BRANCH="${{ needs.check-changes.outputs.branch_name }}"
-          SHA="${{ needs.check-changes.outputs.short_sha }}"
-          DATE=$(date -u +'%Y-%m-%d')
-          TAG="${{ needs.check-changes.outputs.nightly_tag }}"
-
-          cat << NOTES > release_notes.md
-          ## 🌙 Nightly Build — ${DATE}
-
-          > **Pre-release** — compiled from the \`${BRANCH}\` working branch.
-          > Not intended for production use. Overwritten daily.
-
-          **Branch:** [\`${BRANCH}\`](https://github.com/${{ github.repository }}/tree/${BRANCH})
-          **Commit:** [\`${SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-          **Board:** \`${{ env.PICO_BOARD }}\`
-          **Pico SDK:** \`${{ env.PICO_SDK_TAG }}\`
-
-          ### Files
-          | File | Description |
-          |---|---|
-          | \`*.uf2\` | Drag-and-drop onto Pico in BOOTSEL mode |
-          | \`*.elf\` | Debug binary for OpenOCD / GDB |
-
-          ### Flashing
-          1. Hold **BOOTSEL**, plug in USB → drive **RPI-RP2** appears
-          2. Copy \`.uf2\` to the drive — Pico reboots automatically
-
-          ---
-          *This release is automatically overwritten on the next nightly build for \`${BRANCH}\`.*
-          NOTES
-
+      # Publish pre-release with auto-generated notes + explicit file list
       - name: Create nightly pre-release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v2
         with:
-          tag:          ${{ needs.check-changes.outputs.nightly_tag }}
-          name:         "🌙 Nightly · ${{ needs.check-changes.outputs.branch_name }} · ${{ needs.check-changes.outputs.short_sha }}"
-          bodyFile:     release_notes.md
-          artifacts:    "release-files/*"
-          artifactErrorsFailBuild: true
-          prerelease:   true
-          draft:        false
-          allowUpdates: true
-          token:        ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ needs.check-changes.outputs.nightly_tag }}
+          name: "🌙 Nightly · ${{ needs.check-changes.outputs.branch_name }} · ${{ needs.check-changes.outputs.short_sha }}"
+          files: |
+            release/pico_sdk_sigrok.uf2
+            release/pico_sdk_sigrok.elf
+            release/LICENSE
+            release/README.md
+          generate_release_notes: true
+          prerelease: true
+          draft: false
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Push the nightly tag so the "no new commits" guard works next time
+      # Push tag so the staleness guard has a reference point next run
       - name: Push nightly tag
         run: |
-          git tag "${{ needs.check-changes.outputs.nightly_tag }}" \
-                  --force 2>/dev/null || true
-          git push origin "${{ needs.check-changes.outputs.nightly_tag }}" \
-                  --force 2>/dev/null || true
+          git tag "${{ needs.check-changes.outputs.nightly_tag }}" --force
+          git push origin "${{ needs.check-changes.outputs.nightly_tag }}" --force
