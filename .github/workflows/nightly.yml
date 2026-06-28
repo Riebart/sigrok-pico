@@ -1,0 +1,317 @@
+# =============================================================================
+# .github/workflows/nightly.yml
+#
+# Nightly pre-release builds from working/feature branches.
+#
+# Triggers:
+#   • Cron: 02:00 UTC daily (against the default branch)
+#   • workflow_dispatch: manually for any branch/board
+# =============================================================================
+
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to build (leave blank for default branch)"
+        required: false
+        default: ""
+      pico_board:
+        description: "PICO_BOARD target"
+        required: true
+        default: "pico"
+        type: choice
+        options:
+          - pico
+          - pico_w
+          - pico2
+      pico_sdk_version:
+        description: "Pico SDK version tag"
+        required: false
+        default: "2.1.1"
+      force_build:
+        description: "Build even if no new commits since last nightly?"
+        required: false
+        default: "false"
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.branch || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.1' }}
+  PICO_BOARD: ${{ github.event.inputs.pico_board       || 'pico'  }}
+  BUILD_TYPE: Release
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1 — Guard: skip if no new commits since last nightly
+  # ═══════════════════════════════════════════════════════════════════════════
+  check-changes:
+    name: Check for new commits
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      branch_name: ${{ steps.check.outputs.branch_name }}
+      nightly_tag: ${{ steps.check.outputs.nightly_tag }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+      date: ${{ steps.check.outputs.date }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine build metadata and staleness
+        id: check
+        env:
+          FORCE: ${{ github.event.inputs.force_build || 'false' }}
+        run: |
+          if [[ -n "${{ github.event.inputs.branch }}" ]]; then
+            BRANCH="${{ github.event.inputs.branch }}"
+          else
+            BRANCH="${GITHUB_REF_NAME}"
+          fi
+
+          BRANCH_SLUG="${BRANCH//\//-}"
+          DATE=$(date -u +'%Y-%m-%d')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          NIGHTLY_TAG="nightly-${BRANCH_SLUG}-${DATE}-${SHORT_SHA}"
+
+          echo "branch_name=${BRANCH}"      >> "$GITHUB_OUTPUT"
+          echo "nightly_tag=${NIGHTLY_TAG}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}"     >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}"               >> "$GITHUB_OUTPUT"
+
+          if [[ "${FORCE}" == "true" ]]; then
+            echo "Force flag set — building regardless."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LAST_TAG=$(git tag --list "nightly-${BRANCH_SLUG}-*" \
+                       --sort=-version:refname | head -1 || true)
+
+          if [[ -z "${LAST_TAG}" ]]; then
+            echo "No previous nightly — first build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COMMIT_COUNT=$(git rev-list "${LAST_TAG}..HEAD" --count 2>/dev/null || echo "0")
+          echo "Commits since ${LAST_TAG}: ${COMMIT_COUNT}"
+
+          if [[ "${COMMIT_COUNT}" -eq 0 ]]; then
+            echo "No new commits — skipping."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New commits found — proceeding."
+            echo "should_build=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Build firmware
+  # ═══════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build nightly firmware
+    needs: check-changes
+    if: needs.check-changes.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      uf2_name: ${{ steps.meta.outputs.uf2_name }}
+      elf_name: ${{ steps.meta.outputs.elf_name }}
+
+    steps:
+      - name: Checkout firmware source (${{ needs.check-changes.outputs.branch_name }})
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Cache Pico SDK
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: pico-sdk-cache
+        with:
+          path: pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
+
+      - name: Cache Pico SDK submodules
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: pico-sdk/lib
+          key: pico-sdk-submodules-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
+
+      - name: Checkout Pico SDK ${{ env.PICO_SDK_VERSION }}
+        if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: ${{ env.PICO_SDK_VERSION }}
+          path: pico-sdk
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Initialize Pico SDK submodules
+        if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
+        run: cd pico-sdk && git submodule update --init --recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            libstdc++-arm-none-eabi-newlib \
+            build-essential \
+            python3
+
+      - name: Verify ARM toolchain
+        run: arm-none-eabi-gcc --version
+
+      - name: Copy pico_sdk_import.cmake
+        run: |
+          cp pico-sdk/external/pico_sdk_import.cmake \
+             pico_sdk_sigrok/pico_sdk_import.cmake
+
+      # ── Compute versioned filenames from branch + date + sha ──────────────
+      - name: Resolve build metadata and filenames
+        id: meta
+        run: |
+          BRANCH="${{ needs.check-changes.outputs.branch_name }}"
+          BRANCH_SLUG="${BRANCH//\//-}"
+          DATE="${{ needs.check-changes.outputs.date }}"
+          SHA="${{ needs.check-changes.outputs.short_sha }}"
+          BOARD="${{ env.PICO_BOARD }}"
+
+          # e.g. sigrok-pico-ads1256-nightly-feature-ads1256-2026-06-28-a3f9c1d-pico
+          BASE="sigrok-pico-ads1256-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}"
+          UF2_NAME="${BASE}.uf2"
+          ELF_NAME="${BASE}.elf"
+
+          echo "artifact_name=${BASE}"  >> "$GITHUB_OUTPUT"
+          echo "uf2_name=${UF2_NAME}"   >> "$GITHUB_OUTPUT"
+          echo "elf_name=${ELF_NAME}"   >> "$GITHUB_OUTPUT"
+
+          echo "UF2 file : ${UF2_NAME}"
+          echo "ELF file : ${ELF_NAME}"
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+                -S pico_sdk_sigrok \
+                -G "Unix Makefiles" \
+                -DPICO_BOARD=${{ env.PICO_BOARD }} \
+                -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+                -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk"
+
+      - name: Build firmware
+        run: cmake --build build -- -j $(nproc)
+
+      # ── Stage with versioned filenames ────────────────────────────────────
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts
+          cp build/pico_sdk_sigrok.uf2  "artifacts/${{ steps.meta.outputs.uf2_name }}"
+          cp build/pico_sdk_sigrok.elf  "artifacts/${{ steps.meta.outputs.elf_name }}"
+          cp LICENSE                     artifacts/
+          cp README.md                   artifacts/
+          echo "--- Staged artifacts ---"
+          ls -lh artifacts/
+
+      - name: Upload nightly artifact
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 3 — Publish rolling nightly pre-release
+  # ═══════════════════════════════════════════════════════════════════════════
+  publish-nightly:
+    name: Publish nightly pre-release
+    needs: [check-changes, build]
+    if: needs.check-changes.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout (for tag operations)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure Git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Download nightly artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: ./release
+
+      - name: Show release files
+        run: ls -lh release/
+
+      - name: Delete stale nightly release for today
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH_SLUG="${{ needs.check-changes.outputs.branch_name }}"
+          BRANCH_SLUG="${BRANCH_SLUG//\//-}"
+          DATE="${{ needs.check-changes.outputs.date }}"
+          PATTERN="nightly-${BRANCH_SLUG}-${DATE}-"
+
+          gh release list --limit 50 --json tagName \
+            --jq ".[].tagName" 2>/dev/null | \
+          grep "^${PATTERN}" | \
+          while read -r OLD_TAG; do
+            echo "Removing stale nightly: ${OLD_TAG}"
+            gh release delete "${OLD_TAG}" --yes --cleanup-tag 2>/dev/null || true
+          done
+
+      - name: Create nightly pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-changes.outputs.nightly_tag }}
+          name: "🌙 Nightly · ${{ needs.check-changes.outputs.branch_name }} · ${{ needs.check-changes.outputs.short_sha }}"
+          files: |
+            release/${{ needs.build.outputs.uf2_name }}
+            release/${{ needs.build.outputs.elf_name }}
+            release/LICENSE
+            release/README.md
+          generate_release_notes: true
+          prerelease: true
+          draft: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push nightly tag
+        run: |
+          git tag "${{ needs.check-changes.outputs.nightly_tag }}" --force
+          git push origin "${{ needs.check-changes.outputs.nightly_tag }}" --force
