@@ -5,11 +5,11 @@
 #
 # Triggers:
 #   • Cron: 02:00 UTC daily (against the default branch)
-#   • workflow_dispatch: manually for any branch/board combination
+#   • workflow_dispatch: manually for any branch / board / mode combination
 #
-# Matrix:
-#   All automatic runs build pico, pico_w, and pico2 in parallel.
-#   workflow_dispatch lets you pick a single board for quick testing.
+# Matrix: pico_board × pico_mode = up to 9 parallel jobs
+#   pico_board : pico | pico_w | pico2
+#   pico_mode  : 0 (baseline 21D+3A) | 1 (digital-26) | 2 (digital-32)
 # =============================================================================
 
 name: Nightly Build
@@ -33,6 +33,16 @@ on:
           - pico
           - pico_w
           - pico2
+      pico_mode:
+        description: "PICO_MODE ('all' builds all modes: 0=baseline 1=dig26 2=dig32)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "0"
+          - "1"
+          - "2"
       pico_sdk_version:
         description: "Pico SDK version tag"
         required: false
@@ -127,10 +137,10 @@ jobs:
           fi
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Build firmware (matrix: one job per board)
+  # JOB 2 — Build firmware (matrix: board × mode)
   # ═══════════════════════════════════════════════════════════════════════════
   build:
-    name: Build nightly (${{ matrix.pico_board }})
+    name: Build nightly (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }})
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
@@ -144,14 +154,19 @@ jobs:
           - pico
           - pico_w
           - pico2
+        pico_mode:
+          - "0"
+          - "1"
+          - "2"
         exclude:
-          # When workflow_dispatch selects a single board, exclude the others
-          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico' && github.event.inputs.pico_board != '') && 'pico' || '' }}
+          # Filter boards when a single board is selected via workflow_dispatch
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico'   && github.event.inputs.pico_board != '') && 'pico'   || '' }}
           - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico_w' && github.event.inputs.pico_board != '') && 'pico_w' || '' }}
-          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico2' && github.event.inputs.pico_board != '') && 'pico2' || '' }}
-
-    outputs:
-      artifact_base: ${{ steps.meta.outputs.artifact_base }}
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico2'  && github.event.inputs.pico_board != '') && 'pico2'  || '' }}
+          # Filter modes when a single mode is selected via workflow_dispatch
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '0' && github.event.inputs.pico_mode != '') && '0' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '1' && github.event.inputs.pico_mode != '') && '1' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '2' && github.event.inputs.pico_mode != '') && '2' || '' }}
 
     steps:
       - name: Checkout firmware source (${{ needs.check-changes.outputs.branch_name }})
@@ -215,18 +230,19 @@ jobs:
           DATE="${{ needs.check-changes.outputs.date }}"
           SHA="${{ needs.check-changes.outputs.short_sha }}"
           BOARD="${{ matrix.pico_board }}"
+          MODE="${{ matrix.pico_mode }}"
 
-          # e.g. sigrok-pico-ads1256-nightly-feature-ads1256-2026-06-28-a3f9c1d-pico
-          BASE="sigrok-pico-ads1256-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}"
+          # e.g. sigrok-pico-ads1256-nightly-main-2026-06-28-a3f9c1d-pico-mode2
+          BASE="sigrok-pico-ads1256-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}-mode${MODE}"
           UF2_NAME="${BASE}.uf2"
           ELF_NAME="${BASE}.elf"
 
-          echo "artifact_base=${BASE}" >> "$GITHUB_OUTPUT"
           echo "artifact_name=${BASE}" >> "$GITHUB_OUTPUT"
           echo "uf2_name=${UF2_NAME}"  >> "$GITHUB_OUTPUT"
           echo "elf_name=${ELF_NAME}"  >> "$GITHUB_OUTPUT"
 
           echo "Board    : ${BOARD}"
+          echo "Mode     : ${MODE}"
           echo "UF2 file : ${UF2_NAME}"
           echo "ELF file : ${ELF_NAME}"
 
@@ -236,6 +252,7 @@ jobs:
                 -S pico_sdk_sigrok \
                 -G "Unix Makefiles" \
                 -DPICO_BOARD=${{ matrix.pico_board }} \
+                -DCMAKE_C_FLAGS="-DPICO_MODE=${{ matrix.pico_mode }}" \
                 -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
                 -DCMAKE_MODULE_PATH="${GITHUB_WORKSPACE}"
 
@@ -250,7 +267,7 @@ jobs:
           echo "--- Staged artifacts ---"
           ls -lh artifacts/
 
-      - name: Upload nightly artifact (${{ matrix.pico_board }})
+      - name: Upload nightly artifact (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }})
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
@@ -282,10 +299,9 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Download all board artifacts
+      - name: Download all board × mode artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          # No 'name' filter — downloads every artifact from the build matrix
           path: ./release
           merge-multiple: true
 

@@ -4,13 +4,13 @@
 # Builds the sigrok-pico ADS1256 firmware and publishes a GitHub Release.
 #
 # Triggers:
-#   • Push a tag like "v1.2.3"  → full build (all boards) + publish release
-#   • Pull request to main      → build-only CI check (all boards)
-#   • Manual workflow_dispatch  → build + publish release with custom inputs
+#   • Push a tag like "v1.2.3"  → full build (all boards × all modes) + release
+#   • Pull request to main      → build-only CI check (all boards × all modes)
+#   • Manual workflow_dispatch  → build + release with optional filtering
 #
-# Matrix:
-#   All automatic runs build pico, pico_w, and pico2 in parallel.
-#   workflow_dispatch lets you pick a single board for quick testing.
+# Matrix: pico_board × pico_mode = up to 9 parallel jobs
+#   pico_board : pico | pico_w | pico2
+#   pico_mode  : 0 (baseline 21D+3A) | 1 (digital-26) | 2 (digital-32)
 # =============================================================================
 
 name: Build & Release Firmware
@@ -30,7 +30,7 @@ on:
         required: true
         default: "v0.0.1"
       pico_board:
-        description: "PICO_BOARD target (leave as 'all' to build all boards)"
+        description: "PICO_BOARD target ('all' builds all boards)"
         required: true
         default: "all"
         type: choice
@@ -39,6 +39,16 @@ on:
           - pico
           - pico_w
           - pico2
+      pico_mode:
+        description: "PICO_MODE ('all' builds all modes: 0=baseline 1=dig26 2=dig32)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "0"
+          - "1"
+          - "2"
       pico_sdk_version:
         description: "Pico SDK version tag"
         required: false
@@ -62,10 +72,10 @@ env:
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 1 — Build firmware (matrix: one job per board)
+  # JOB 1 — Build firmware (matrix: board × mode)
   # ═══════════════════════════════════════════════════════════════════════════
   build:
-    name: Build (${{ matrix.pico_board }})
+    name: Build (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }})
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -77,11 +87,19 @@ jobs:
           - pico
           - pico_w
           - pico2
+        pico_mode:
+          - "0"
+          - "1"
+          - "2"
         exclude:
-          # When workflow_dispatch selects a single board, exclude the others
-          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico' && github.event.inputs.pico_board != '') && 'pico' || '' }}
+          # Filter boards when a single board is selected via workflow_dispatch
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico'   && github.event.inputs.pico_board != '') && 'pico'   || '' }}
           - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico_w' && github.event.inputs.pico_board != '') && 'pico_w' || '' }}
-          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico2' && github.event.inputs.pico_board != '') && 'pico2' || '' }}
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico2'  && github.event.inputs.pico_board != '') && 'pico2'  || '' }}
+          # Filter modes when a single mode is selected via workflow_dispatch
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '0' && github.event.inputs.pico_mode != '') && '0' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '1' && github.event.inputs.pico_mode != '') && '1' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '2' && github.event.inputs.pico_mode != '') && '2' || '' }}
 
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -151,21 +169,22 @@ jobs:
           fi
 
           BOARD="${{ matrix.pico_board }}"
+          MODE="${{ matrix.pico_mode }}"
           DATE=$(date -u +'%Y-%m-%d')
 
-          # e.g. sigrok-pico-ads1256-v1.0.0-pico-2026-06-28
-          BASE="sigrok-pico-ads1256-${VERSION}-${BOARD}-${DATE}"
+          # e.g. sigrok-pico-ads1256-v1.0.0-pico-mode2-2026-06-28
+          BASE="sigrok-pico-ads1256-${VERSION}-${BOARD}-mode${MODE}-${DATE}"
           UF2_NAME="${BASE}.uf2"
           ELF_NAME="${BASE}.elf"
-          ARTIFACT="${BASE}"
 
           echo "version=${VERSION}"        >> "$GITHUB_OUTPUT"
-          echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${BASE}"     >> "$GITHUB_OUTPUT"
           echo "uf2_name=${UF2_NAME}"      >> "$GITHUB_OUTPUT"
           echo "elf_name=${ELF_NAME}"      >> "$GITHUB_OUTPUT"
 
           echo "Version  : ${VERSION}"
           echo "Board    : ${BOARD}"
+          echo "Mode     : ${MODE}"
           echo "UF2 file : ${UF2_NAME}"
           echo "ELF file : ${ELF_NAME}"
 
@@ -175,6 +194,7 @@ jobs:
                 -S pico_sdk_sigrok \
                 -G "Unix Makefiles" \
                 -DPICO_BOARD=${{ matrix.pico_board }} \
+                -DCMAKE_C_FLAGS="-DPICO_MODE=${{ matrix.pico_mode }}" \
                 -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
                 -DCMAKE_MODULE_PATH="${GITHUB_WORKSPACE}"
 
@@ -189,7 +209,7 @@ jobs:
           echo "--- Staged artifacts ---"
           ls -lh artifacts/
 
-      - name: Upload build artifact (${{ matrix.pico_board }})
+      - name: Upload build artifact (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }})
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
@@ -198,7 +218,7 @@ jobs:
           retention-days: 30
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Publish GitHub Release (collects all board artifacts)
+  # JOB 2 — Publish GitHub Release (collects all board × mode artifacts)
   # ═══════════════════════════════════════════════════════════════════════════
   release:
     name: Create GitHub Release
@@ -211,10 +231,9 @@ jobs:
       contents: write
 
     steps:
-      - name: Download all board artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          # No 'name' filter — downloads every artifact from the build matrix
           path: ./release
           merge-multiple: true
 
