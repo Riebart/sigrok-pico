@@ -196,9 +196,9 @@ void ads1256_encode_sample(int32_t raw24, uint8_t out[ADS1256_A_BYTES])
 {
     if (raw24 < 0) raw24 = 0;
     uint32_t v = (uint32_t)raw24 >> ADS1256_A_RSHIFT;
-    out[0] = 0x80 | ((v >> 14) & 0x7F);
+    out[0] = 0x80 | ( v        & 0x7F);
     out[1] = 0x80 | ((v >>  7) & 0x7F);
-    out[2] = 0x80 | ( v        & 0x7F);
+    out[2] = 0x80 | ((v >> 14) & 0x7F);
 }
 
 /* -----------------------------------------------------------------------

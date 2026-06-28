@@ -18,6 +18,9 @@
 #include "tusb.h"//.tud_cdc_write...
 
 #include "sr_device.h"
+#ifdef ADS1256_MODE
+#include "ads1256.h"
+#endif
 
 //forced_test_mode is a special mode that puts the device into an active sampling
 //state out of reset.  It is used for a quick way to debug features without needed
@@ -500,10 +503,31 @@ uint32_t send_slices_analog(sr_device_t *d,uint8_t *dbuf,uint8_t *abuf){
 	    //Dprintf("s %d cv %X bps %d idx t %d r %d \n\r",s,cval,d_dma_bps,txbufidx,rxbufdidx);
          }
          for(char i=0;i<d->a_chan_cnt;i++){
-           txbuf[txbufidx]=(abuf[rxbufaidx]>>1)|0x80;
-           txbufidx++;
-           rxbufaidx++;
-	   //Dprintf("av %X cnt %d idx t %d r %d\n\r",abuf[rxbufaidx-1],d->a_chan_cnt,txbufidx,rxbufaidx);
+#ifdef ADS1256_MODE
+            // ADS1256 uses 3 wire bytes per sample
+            if (!ads1256_multichan) {
+                // Wait for a sample to be available in ring buffer
+                while (ads1256_ring_rd == ads1256_ring_wr) {
+                    if (!ads1256_core1_run) break;
+                    tight_loop_contents();
+                }
+                txbuf[txbufidx++] = ads1256_ring[ads1256_ring_rd];
+                ads1256_ring_rd = (ads1256_ring_rd + 1) % ADS1256_RING_BYTES;
+                txbuf[txbufidx++] = ads1256_ring[ads1256_ring_rd];
+                ads1256_ring_rd = (ads1256_ring_rd + 1) % ADS1256_RING_BYTES;
+                txbuf[txbufidx++] = ads1256_ring[ads1256_ring_rd];
+                ads1256_ring_rd = (ads1256_ring_rd + 1) % ADS1256_RING_BYTES;
+            } else {
+                txbuf[txbufidx++] = abuf[rxbufaidx++];
+                txbuf[txbufidx++] = abuf[rxbufaidx++];
+                txbuf[txbufidx++] = abuf[rxbufaidx++];
+            }
+#else
+            txbuf[txbufidx]=(abuf[rxbufaidx]>>1)|0x80;
+            txbufidx++;
+            rxbufaidx++;
+	    //Dprintf("av %X cnt %d idx t %d r %d\n\r",abuf[rxbufaidx-1],d->a_chan_cnt,txbufidx,rxbufaidx);
+#endif
          } 
          //Since this doesn't support RLEs we don't need to buffer
          //extra bytes to prevent txbuf overflow, but this value
@@ -511,7 +535,8 @@ uint32_t send_slices_analog(sr_device_t *d,uint8_t *dbuf,uint8_t *abuf){
          check_tx_buf(TX_BUF_THRESH);
    }//for s
    check_tx_buf(1);
-}//send_slices_analog
+}
+//send_slices_analog
 
 //This function monitors the dma interrupt handler outputs to send the remainder of a full DMA buffer.
 void send_half(void){
@@ -540,6 +565,11 @@ void send_half(void){
        else {                send_slices_4B(&dev,&(capture_buf[dbuf_start]));}
         num_halves++;
   }//if dma_halves>num_halves
+#ifdef ADS1256_MODE
+  if (dev.state == SENDING && !dev.cont && dma_halves >= exp_halves) {
+       dev.state = DMA_DONE;
+  }
+#endif
   //If we ever recieve a usb_plus, consider all samples to be sent, even if not in continuous mode
   if(dev.usb_plus){
     dev.state=SAMPLES_SENT;
@@ -788,10 +818,12 @@ int main(){
     //Note that digital only modes don't block all configuration related to ADC, but does enough
     //to ensure we can properly sample the pins digitally.
     #ifdef BASE_MODE
+#ifndef ADS1256_MODE
     adc_gpio_init(26);
     adc_gpio_init(27);
     adc_gpio_init(28);
     adc_init();
+#endif
     #endif
 
     halves_seen=0;
@@ -901,6 +933,9 @@ int main(){
 
    gpio_init_mask(GPIO_D_MASK); //set as GPIO_FUNC_SIO and clear output enable
    gpio_set_dir_masked(GPIO_D_MASK,0);  //Set all to input
+#ifdef ADS1256_MODE
+   multicore_launch_core1(ads1256_core1_entry);
+#endif
    //Core1 for PIN_TEST_MODE is called at the end so that gpio inits are done
    //after all of the other previous ones that define them as inputs only.
    //It also helps above Dprintf/UART conflicts between the two cores
@@ -913,6 +948,40 @@ int main(){
 
 while(1){
           ecnt++;
+#ifdef ADS1256_MODE
+          // Drain ADS1256 single-channel ring buffer when digital is disabled
+          if ((dev.state == SENDING || dev.state == DMA_DONE) && dev.d_mask == 0) {
+              while (ads1256_ring_rd != ads1256_ring_wr) {
+                  uint32_t available = (ads1256_ring_wr >= ads1256_ring_rd) ? 
+                                       (ads1256_ring_wr - ads1256_ring_rd) : 
+                                       (ADS1256_RING_BYTES - ads1256_ring_rd + ads1256_ring_wr);
+                  if (available < 3) {
+                      break;
+                  }
+                  txbuf[txbufidx++] = ads1256_ring[ads1256_ring_rd];
+                  ads1256_ring_rd = (ads1256_ring_rd + 1) % ADS1256_RING_BYTES;
+                  txbuf[txbufidx++] = ads1256_ring[ads1256_ring_rd];
+                  ads1256_ring_rd = (ads1256_ring_rd + 1) % ADS1256_RING_BYTES;
+                  txbuf[txbufidx++] = ads1256_ring[ads1256_ring_rd];
+                  ads1256_ring_rd = (ads1256_ring_rd + 1) % ADS1256_RING_BYTES;
+                  dev.scnt++;
+                  if (txbufidx >= TX_BUF_THRESH) {
+                      my_stdio_usb_out_chars(txbuf, txbufidx);
+                      bytecnt += txbufidx;
+                      txbufidx = 0;
+                  }
+                  if (!dev.cont && dev.scnt >= dev.num_samples) {
+                      if (txbufidx > 0) {
+                          my_stdio_usb_out_chars(txbuf, txbufidx);
+                          bytecnt += txbufidx;
+                          txbufidx = 0;
+                      }
+                      dev.state = SAMPLES_SENT;
+                      break;
+                  }
+              }
+          }
+#endif
           if(send_resp){
             acnt++;
             int mylen=strlen(dev.rspstr);
@@ -947,6 +1016,24 @@ while(1){
          if(dev.state==STARTED) {
           bool adc_aborting=false;
           Dprintf("STRTING\n\r");
+
+#ifdef ADS1256_MODE
+          // Configure ADS1256 Core 1 sampling
+          ads1256_multichan = (dev.a_chan_cnt > 1);
+          if (!ads1256_multichan) {
+              // Find which single channel is enabled
+              for (int i = 0; i < NUM_A_CHAN; i++) {
+                  if ((dev.a_mask >> i) & 1) {
+                      ads1256_single_ch = i;
+                      break;
+                  }
+              }
+          }
+          ads1256_core1_run = true;
+#endif
+
+           //Sample rate must always be even.  Pulseview code enforces this 
+           //because it specifies a fixed set of frequencies, but sigrok cli can still odd ones.
            //Sample rate must always be even.  Pulseview code enforces this 
            //because it specifies a fixed set of frequencies, but sigrok cli can still odd ones.
            dev.sample_rate>>=1;
@@ -1224,10 +1311,12 @@ for faster parsing.
             h0intmask|=1<<pdmachan0;
             h1intmask|=1<<pdmachan1;
           }
+#ifndef ADS1256_MODE
           if(dev.a_chan_cnt){
             h0intmask|=1<<admachan0;
             h1intmask|=1<<admachan1;
           }
+#endif
           dma_halves=0;
           num_halves=0;
           sho_cnt=0;
@@ -1351,7 +1440,11 @@ for faster parsing.
     //Since there are so many FSM arcs, it's safest to just continually clear state
     //if we aren't sending
     if(dev.state==IDLE){
+#ifdef ADS1256_MODE
+    ads1256_core1_run = false;
+#endif
      //forced_test_mode is really a one shot deal as there is no way to restart it.
+     exit the mode so that host accesses will work normally
      //Exit the mode so that host accesses will work normally
      forced_test_mode_run=false;
      #ifdef BASE_MODE

@@ -144,9 +144,9 @@ void ads1256_hw_init(void);
  *
  * Bit layout:
  *   V = (uint32_t)max(raw24,0) >> ADS1256_A_RSHIFT   (21-bit unsigned)
- *   out[0] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14
+ *   out[0] = 0x80 | ( V        & 0x7F)   bits  6..0
  *   out[1] = 0x80 | ((V >>  7) & 0x7F)   bits 13..7
- *   out[2] = 0x80 | ( V        & 0x7F)   bits  6..0
+ *   out[2] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14
  *
  * The scale and offset reported by the 'a' command are computed from
  * ADS1256_PGA_GAIN and ADS1256_BUF_ENABLE in sr_device.h:
