@@ -48,8 +48,8 @@ defaults:
 
 env:
   PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.1' }}
-  PICO_BOARD:       ${{ github.event.inputs.pico_board       || 'pico'  }}
-  BUILD_TYPE:       Release
+  PICO_BOARD: ${{ github.event.inputs.pico_board       || 'pico'  }}
+  BUILD_TYPE: Release
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -63,14 +63,14 @@ jobs:
 
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
-      branch_name:  ${{ steps.check.outputs.branch_name }}
-      nightly_tag:  ${{ steps.check.outputs.nightly_tag }}
-      short_sha:    ${{ steps.check.outputs.short_sha }}
-      date:         ${{ steps.check.outputs.date }}
+      branch_name: ${{ steps.check.outputs.branch_name }}
+      nightly_tag: ${{ steps.check.outputs.nightly_tag }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+      date: ${{ steps.check.outputs.date }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
@@ -136,33 +136,33 @@ jobs:
 
     outputs:
       artifact_name: ${{ steps.meta.outputs.artifact_name }}
-      uf2_name:      ${{ steps.meta.outputs.uf2_name }}
-      elf_name:      ${{ steps.meta.outputs.elf_name }}
+      uf2_name: ${{ steps.meta.outputs.uf2_name }}
+      elf_name: ${{ steps.meta.outputs.elf_name }}
 
     steps:
       - name: Checkout firmware source (${{ needs.check-changes.outputs.branch_name }})
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Cache Pico SDK
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: pico-sdk-cache
         with:
           path: pico-sdk
           key: pico-sdk-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
       - name: Cache Pico SDK submodules
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: pico-sdk/lib
           key: pico-sdk-submodules-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
       - name: Checkout Pico SDK ${{ env.PICO_SDK_VERSION }}
         if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: raspberrypi/pico-sdk
           ref: ${{ env.PICO_SDK_VERSION }}
@@ -259,7 +259,7 @@ jobs:
 
     steps:
       - name: Checkout (for tag operations)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
