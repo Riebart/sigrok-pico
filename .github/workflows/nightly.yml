@@ -76,10 +76,10 @@ jobs:
 
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
-      branch_name:  ${{ steps.check.outputs.branch_name }}
-      nightly_tag:  ${{ steps.check.outputs.nightly_tag }}
-      short_sha:    ${{ steps.check.outputs.short_sha }}
-      date:         ${{ steps.check.outputs.date }}
+      branch_name: ${{ steps.check.outputs.branch_name }}
+      nightly_tag: ${{ steps.check.outputs.nightly_tag }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+      date: ${{ steps.check.outputs.date }}
 
     steps:
       - name: Checkout repository
@@ -232,8 +232,7 @@ jobs:
           BOARD="${{ matrix.pico_board }}"
           MODE="${{ matrix.pico_mode }}"
 
-          # e.g. sigrok-pico-ads1256-nightly-main-2026-06-28-a3f9c1d-pico-mode2
-          BASE="sigrok-pico-ads1256-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}-mode${MODE}"
+          BASE="sigrok-pico-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}"
           UF2_NAME="${BASE}.uf2"
           ELF_NAME="${BASE}.elf"
 

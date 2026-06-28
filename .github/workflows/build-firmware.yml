@@ -172,8 +172,7 @@ jobs:
           MODE="${{ matrix.pico_mode }}"
           DATE=$(date -u +'%Y-%m-%d')
 
-          # e.g. sigrok-pico-ads1256-v1.0.0-pico-mode2-2026-06-28
-          BASE="sigrok-pico-ads1256-${VERSION}-${BOARD}-mode${MODE}-${DATE}"
+          BASE="sigrok-pico-${VERSION}-${BOARD}-${DATE}"
           UF2_NAME="${BASE}.uf2"
           ELF_NAME="${BASE}.elf"
 
@@ -256,9 +255,13 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: "sigrok-pico ADS1256 ${{ steps.version.outputs.version }}"
-          files: release/**
+          tag_name: ${{ needs.build.outputs.version }}
+          name: "sigrok-pico ${{ needs.build.outputs.version }}"
+          files: |
+            release/${{ needs.build.outputs.uf2_name }}
+            release/${{ needs.build.outputs.elf_name }}
+            release/LICENSE
+            release/README.md
           generate_release_notes: true
           draft: ${{ github.event.inputs.draft_release == 'true' || false }}
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
