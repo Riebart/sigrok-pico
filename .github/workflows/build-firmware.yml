@@ -53,9 +53,9 @@ defaults:
     shell: bash
 
 env:
-  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.1' }}
-  PICO_BOARD:       ${{ github.event.inputs.pico_board       || 'pico'  }}
-  BUILD_TYPE:       Release
+  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.0' }}
+  PICO_BOARD: ${{ github.event.inputs.pico_board       || 'pico'  }}
+  BUILD_TYPE: Release
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -69,9 +69,9 @@ jobs:
 
     outputs:
       artifact_name: ${{ steps.meta.outputs.artifact_name }}
-      version:        ${{ steps.meta.outputs.version }}
-      uf2_name:       ${{ steps.meta.outputs.uf2_name }}
-      elf_name:       ${{ steps.meta.outputs.elf_name }}
+      version: ${{ steps.meta.outputs.version }}
+      uf2_name: ${{ steps.meta.outputs.uf2_name }}
+      elf_name: ${{ steps.meta.outputs.elf_name }}
 
     steps:
       - name: Checkout firmware source
@@ -221,6 +221,6 @@ jobs:
             release/LICENSE
             release/README.md
           generate_release_notes: true
-          draft:      ${{ github.event.inputs.draft_release == 'true' || false }}
+          draft: ${{ github.event.inputs.draft_release == 'true' || false }}
           prerelease: ${{ contains(needs.build.outputs.version, '-') }}
           token: ${{ secrets.GITHUB_TOKEN }}
