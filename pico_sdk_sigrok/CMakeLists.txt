@@ -21,8 +21,26 @@ include(pico_sdk_import.cmake)
 project(pico_sdk_sigrok C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
-#See https://github.com/pico-coder/sigrok-pico/pull/63/  
-#setting this allows the DTR to be ignored.  In addition to this, the use of 
+
+# ADS1256 compile-time overrides (PICO_MODE 3 only).
+# Pass on the cmake command line, e.g.:
+#   cmake -DADS1256_PGA_GAIN=2 -DADS1256_BUF_ENABLE=1 ..
+# Defaults are defined in sr_device.h when not specified here.
+if(DEFINED ADS1256_PGA_GAIN)
+    add_compile_definitions(ADS1256_PGA_GAIN=${ADS1256_PGA_GAIN})
+endif()
+if(DEFINED ADS1256_BUF_ENABLE)
+    add_compile_definitions(ADS1256_BUF_ENABLE=${ADS1256_BUF_ENABLE})
+endif()
+if(DEFINED ADS1256_CLKIN_HZ)
+    add_compile_definitions(ADS1256_CLKIN_HZ=${ADS1256_CLKIN_HZ})
+endif()
+if(DEFINED ADS1256_DRATE_REG)
+    add_compile_definitions(ADS1256_DRATE_REG=${ADS1256_DRATE_REG})
+endif()
+
+#See https://github.com/pico-coder/sigrok-pico/pull/63/
+#setting this allows the DTR to be ignored.  In addition to this, the use of
 #tud_cdc_connected should be replaced with tud_ready.
 add_definitions(-DPICO_STDIO_USB_CONNECTION_WITHOUT_DTR=1)
 pico_sdk_init()
@@ -38,15 +56,13 @@ pico_enable_stdio_uart(pico_sdk_sigrok 0)
 pico_add_extra_outputs(pico_sdk_sigrok)
 
 target_link_libraries(
-    pico_sdk_sigrok 
+    pico_sdk_sigrok
     pico_stdlib
     hardware_adc
     hardware_dma
     hardware_pio
+    hardware_spi
     hardware_sync
-#    hardware_sio
-#    hardware_gpio
-#    hardware_timer
     pico_multicore
     pico_stdio_usb
 )
