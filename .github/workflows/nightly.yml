@@ -6,18 +6,6 @@
 # Triggers:
 #   • Cron: 02:00 UTC daily (against the default branch)
 #   • workflow_dispatch: manually for any branch/board
-#
-# Features:
-#   • Skips build if no new commits since last nightly tag
-#   • Pico SDK + submodules cached (saves ~200MB clone on repeat runs)
-#   • All actions pinned to full commit SHAs (supply-chain security)
-#   • concurrency block cancels stale in-progress runs per branch
-#   • persist-credentials: false on all checkouts
-#   • defaults.run.shell: bash
-#   • Exact known output filenames (fail-fast if binary missing)
-#   • LICENSE + README.md bundled in pre-release
-#   • Auto-generated release notes via softprops/action-gh-release
-#   • Rolling: one nightly pre-release per branch per day (old ones deleted)
 # =============================================================================
 
 name: Nightly Build
@@ -78,6 +66,7 @@ jobs:
       branch_name:  ${{ steps.check.outputs.branch_name }}
       nightly_tag:  ${{ steps.check.outputs.nightly_tag }}
       short_sha:    ${{ steps.check.outputs.short_sha }}
+      date:         ${{ steps.check.outputs.date }}
 
     steps:
       - name: Checkout repository
@@ -106,6 +95,7 @@ jobs:
           echo "branch_name=${BRANCH}"      >> "$GITHUB_OUTPUT"
           echo "nightly_tag=${NIGHTLY_TAG}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}"     >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}"               >> "$GITHUB_OUTPUT"
 
           if [[ "${FORCE}" == "true" ]]; then
             echo "Force flag set — building regardless."
@@ -146,6 +136,8 @@ jobs:
 
     outputs:
       artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      uf2_name:      ${{ steps.meta.outputs.uf2_name }}
+      elf_name:      ${{ steps.meta.outputs.elf_name }}
 
     steps:
       - name: Checkout firmware source (${{ needs.check-changes.outputs.branch_name }})
@@ -155,7 +147,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # ── Cache: Pico SDK repo ────────────────────────────────────────────
       - name: Cache Pico SDK
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         id: pico-sdk-cache
@@ -163,14 +154,12 @@ jobs:
           path: pico-sdk
           key: pico-sdk-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
-      # ── Cache: Pico SDK submodules ──────────────────────────────────────
       - name: Cache Pico SDK submodules
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: pico-sdk/lib
           key: pico-sdk-submodules-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
-      # ── Checkout Pico SDK (only on cache miss) ──────────────────────────
       - name: Checkout Pico SDK ${{ env.PICO_SDK_VERSION }}
         if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -181,12 +170,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # ── Init submodules (only on cache miss) ────────────────────────────
       - name: Initialize Pico SDK submodules
         if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
         run: cd pico-sdk && git submodule update --init --recursive
 
-      # ── Install toolchain ───────────────────────────────────────────────
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -201,19 +188,33 @@ jobs:
       - name: Verify ARM toolchain
         run: arm-none-eabi-gcc --version
 
-      # ── Copy pico_sdk_import.cmake ──────────────────────────────────────
       - name: Copy pico_sdk_import.cmake
         run: |
           cp pico-sdk/external/pico_sdk_import.cmake \
              pico_sdk_sigrok/pico_sdk_import.cmake
 
-      - name: Set artifact name
+      # ── Compute versioned filenames from branch + date + sha ──────────────
+      - name: Resolve build metadata and filenames
         id: meta
         run: |
-          TAG="${{ needs.check-changes.outputs.nightly_tag }}"
-          echo "artifact_name=${TAG}-${{ env.PICO_BOARD }}" >> "$GITHUB_OUTPUT"
+          BRANCH="${{ needs.check-changes.outputs.branch_name }}"
+          BRANCH_SLUG="${BRANCH//\//-}"
+          DATE="${{ needs.check-changes.outputs.date }}"
+          SHA="${{ needs.check-changes.outputs.short_sha }}"
+          BOARD="${{ env.PICO_BOARD }}"
 
-      # ── CMake configure ─────────────────────────────────────────────────
+          # e.g. sigrok-pico-ads1256-nightly-feature-ads1256-2026-06-28-a3f9c1d-pico
+          BASE="sigrok-pico-ads1256-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}"
+          UF2_NAME="${BASE}.uf2"
+          ELF_NAME="${BASE}.elf"
+
+          echo "artifact_name=${BASE}"  >> "$GITHUB_OUTPUT"
+          echo "uf2_name=${UF2_NAME}"   >> "$GITHUB_OUTPUT"
+          echo "elf_name=${ELF_NAME}"   >> "$GITHUB_OUTPUT"
+
+          echo "UF2 file : ${UF2_NAME}"
+          echo "ELF file : ${ELF_NAME}"
+
       - name: Configure CMake
         run: |
           cmake -B build \
@@ -223,21 +224,20 @@ jobs:
                 -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
                 -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk"
 
-      # ── Build ───────────────────────────────────────────────────────────
       - name: Build firmware
         run: cmake --build build -- -j $(nproc)
 
-      # ── Collect artefacts (exact names — fails loud if missing) ──────────
+      # ── Stage with versioned filenames ────────────────────────────────────
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp build/pico_sdk_sigrok.uf2 artifacts/
-          cp build/pico_sdk_sigrok.elf artifacts/
-          cp LICENSE                   artifacts/
-          cp README.md                 artifacts/
+          cp build/pico_sdk_sigrok.uf2  "artifacts/${{ steps.meta.outputs.uf2_name }}"
+          cp build/pico_sdk_sigrok.elf  "artifacts/${{ steps.meta.outputs.elf_name }}"
+          cp LICENSE                     artifacts/
+          cp README.md                   artifacts/
+          echo "--- Staged artifacts ---"
           ls -lh artifacts/
 
-      # ── Upload ──────────────────────────────────────────────────────────
       - name: Upload nightly artifact
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
@@ -263,7 +263,7 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
-          persist-credentials: true   # needed to push the nightly tag back
+          persist-credentials: true
 
       - name: Configure Git identity
         run: |
@@ -279,14 +279,13 @@ jobs:
       - name: Show release files
         run: ls -lh release/
 
-      # Delete stale same-branch same-date nightly (keep exactly one per day)
       - name: Delete stale nightly release for today
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH_SLUG="${{ needs.check-changes.outputs.branch_name }}"
           BRANCH_SLUG="${BRANCH_SLUG//\//-}"
-          DATE=$(date -u +'%Y-%m-%d')
+          DATE="${{ needs.check-changes.outputs.date }}"
           PATTERN="nightly-${BRANCH_SLUG}-${DATE}-"
 
           gh release list --limit 50 --json tagName \
@@ -297,15 +296,14 @@ jobs:
             gh release delete "${OLD_TAG}" --yes --cleanup-tag 2>/dev/null || true
           done
 
-      # Publish pre-release with auto-generated notes + explicit file list
       - name: Create nightly pre-release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.check-changes.outputs.nightly_tag }}
           name: "🌙 Nightly · ${{ needs.check-changes.outputs.branch_name }} · ${{ needs.check-changes.outputs.short_sha }}"
           files: |
-            release/pico_sdk_sigrok.uf2
-            release/pico_sdk_sigrok.elf
+            release/${{ needs.build.outputs.uf2_name }}
+            release/${{ needs.build.outputs.elf_name }}
             release/LICENSE
             release/README.md
           generate_release_notes: true
@@ -313,7 +311,6 @@ jobs:
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Push tag so the staleness guard has a reference point next run
       - name: Push nightly tag
         run: |
           git tag "${{ needs.check-changes.outputs.nightly_tag }}" --force

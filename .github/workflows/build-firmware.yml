@@ -7,16 +7,6 @@
 #   • Push a tag like "v1.2.3"  → full build + publish release
 #   • Pull request to main      → build-only CI check
 #   • Manual workflow_dispatch  → build + publish release with custom inputs
-#
-# Improvements over v1:
-#   • Pico SDK + submodules cached (saves ~200MB clone on repeat runs)
-#   • All actions pinned to full commit SHAs (supply-chain security)
-#   • concurrency block cancels stale in-progress runs
-#   • persist-credentials: false on all checkouts
-#   • defaults.run.shell: bash
-#   • Exact known output filenames (fail-fast if binary missing)
-#   • LICENSE + README.md bundled in release
-#   • Auto-generated release notes via softprops/action-gh-release
 # =============================================================================
 
 name: Build & Release Firmware
@@ -80,16 +70,16 @@ jobs:
     outputs:
       artifact_name: ${{ steps.meta.outputs.artifact_name }}
       version:        ${{ steps.meta.outputs.version }}
+      uf2_name:       ${{ steps.meta.outputs.uf2_name }}
+      elf_name:       ${{ steps.meta.outputs.elf_name }}
 
     steps:
-      # ── Checkout firmware source ──────────────────────────────────────────
       - name: Checkout firmware source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      # ── Cache: Pico SDK repo ──────────────────────────────────────────────
       - name: Cache Pico SDK
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         id: pico-sdk-cache
@@ -97,14 +87,12 @@ jobs:
           path: pico-sdk
           key: pico-sdk-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
-      # ── Cache: Pico SDK submodules (tinyusb, lwIP, etc.) ─────────────────
       - name: Cache Pico SDK submodules
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: pico-sdk/lib
           key: pico-sdk-submodules-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
-      # ── Checkout Pico SDK (only on cache miss) ────────────────────────────
       - name: Checkout Pico SDK ${{ env.PICO_SDK_VERSION }}
         if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -115,12 +103,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # ── Init submodules (only on cache miss) ──────────────────────────────
       - name: Initialize Pico SDK submodules
         if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
         run: cd pico-sdk && git submodule update --init --recursive
 
-      # ── Install toolchain ─────────────────────────────────────────────────
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -135,14 +121,13 @@ jobs:
       - name: Verify ARM toolchain
         run: arm-none-eabi-gcc --version
 
-      # ── Copy pico_sdk_import.cmake ────────────────────────────────────────
       - name: Copy pico_sdk_import.cmake
         run: |
           cp pico-sdk/external/pico_sdk_import.cmake \
              pico_sdk_sigrok/pico_sdk_import.cmake
 
-      # ── Resolve version / artifact name ───────────────────────────────────
-      - name: Resolve build metadata
+      # ── Resolve version and compute all output filenames here ─────────────
+      - name: Resolve build metadata and filenames
         id: meta
         run: |
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
@@ -152,11 +137,25 @@ jobs:
           else
             VERSION="dev-$(git rev-parse --short HEAD)"
           fi
-          ARTIFACT="sigrok-pico-ads1256-${VERSION}-${{ env.PICO_BOARD }}"
-          echo "version=${VERSION}"        >> "$GITHUB_OUTPUT"
-          echo "artifact_name=${ARTIFACT}" >> "$GITHUB_OUTPUT"
 
-      # ── CMake configure ───────────────────────────────────────────────────
+          BOARD="${{ env.PICO_BOARD }}"
+          DATE=$(date -u +'%Y-%m-%d')
+
+          # e.g. sigrok-pico-ads1256-v1.0.0-pico-2026-06-28
+          BASE="sigrok-pico-ads1256-${VERSION}-${BOARD}-${DATE}"
+          UF2_NAME="${BASE}.uf2"
+          ELF_NAME="${BASE}.elf"
+          ARTIFACT="${BASE}"
+
+          echo "version=${VERSION}"          >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${ARTIFACT}"   >> "$GITHUB_OUTPUT"
+          echo "uf2_name=${UF2_NAME}"        >> "$GITHUB_OUTPUT"
+          echo "elf_name=${ELF_NAME}"        >> "$GITHUB_OUTPUT"
+
+          echo "Version  : ${VERSION}"
+          echo "UF2 file : ${UF2_NAME}"
+          echo "ELF file : ${ELF_NAME}"
+
       - name: Configure CMake
         run: |
           cmake -B build \
@@ -166,21 +165,20 @@ jobs:
                 -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
                 -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk"
 
-      # ── Build ─────────────────────────────────────────────────────────────
       - name: Build firmware
         run: cmake --build build -- -j $(nproc)
 
-      # ── Collect artefacts (explicit names — fails loud if missing) ─────────
+      # ── Stage with versioned filenames ────────────────────────────────────
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp build/pico_sdk_sigrok.uf2 artifacts/
-          cp build/pico_sdk_sigrok.elf artifacts/
-          cp LICENSE                   artifacts/
-          cp README.md                 artifacts/
+          cp build/pico_sdk_sigrok.uf2  "artifacts/${{ steps.meta.outputs.uf2_name }}"
+          cp build/pico_sdk_sigrok.elf  "artifacts/${{ steps.meta.outputs.elf_name }}"
+          cp LICENSE                     artifacts/
+          cp README.md                   artifacts/
+          echo "--- Staged artifacts ---"
           ls -lh artifacts/
 
-      # ── Upload ────────────────────────────────────────────────────────────
       - name: Upload build artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
@@ -191,7 +189,6 @@ jobs:
 
   # ═══════════════════════════════════════════════════════════════════════════
   # JOB 2 — Publish GitHub Release
-  # Only runs on a version tag push OR manual workflow_dispatch
   # ═══════════════════════════════════════════════════════════════════════════
   release:
     name: Create GitHub Release
@@ -219,8 +216,8 @@ jobs:
           tag_name: ${{ needs.build.outputs.version }}
           name: "sigrok-pico ADS1256 ${{ needs.build.outputs.version }}"
           files: |
-            release/pico_sdk_sigrok.uf2
-            release/pico_sdk_sigrok.elf
+            release/${{ needs.build.outputs.uf2_name }}
+            release/${{ needs.build.outputs.elf_name }}
             release/LICENSE
             release/README.md
           generate_release_notes: true
