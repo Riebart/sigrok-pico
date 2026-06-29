@@ -48,6 +48,7 @@ pico_sdk_init()
 add_executable(pico_sdk_sigrok
   pico_sdk_sigrok.c
   sr_device.c
+  main.c
   ads1256.c
 )
 
