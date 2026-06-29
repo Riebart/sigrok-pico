@@ -56,6 +56,7 @@ add_executable(pico_sdk_sigrok
 #   0  baseline: 21 digital + 3 analog  (default)
 #   1  digital-26: 26 digital channels
 #   2  digital-32: 32 digital channels
+#   3  Uses an external ADC for acquisition
 #
 # Pass from the cmake command line as:   -DPICO_MODE=2
 # The CI workflows inject this as a CMake cache variable; it must be
@@ -63,7 +64,7 @@ add_executable(pico_sdk_sigrok
 # conditionals in the source files are evaluated correctly.
 # ---------------------------------------------------------------------------
 if(NOT DEFINED PICO_MODE)
-    set(PICO_MODE 0 CACHE STRING "Sigrok-pico channel mode (0=baseline, 1=dig26, 2=dig32)")
+    set(PICO_MODE 0 CACHE STRING "Sigrok-pico channel mode (0=baseline, 1=dig26, 2=dig32, 3=external-adc)")
 endif()
 message(STATUS "Building with PICO_MODE=${PICO_MODE}")
 target_compile_definitions(pico_sdk_sigrok PUBLIC PICO_MODE=${PICO_MODE})

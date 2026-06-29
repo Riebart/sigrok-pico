@@ -42,6 +42,7 @@ on:
           - "0"
           - "1"
           - "2"
+          - "3"
       pico_sdk_version:
         description: "Pico SDK version tag"
         required: false
@@ -152,6 +153,7 @@ jobs:
           - "0"
           - "1"
           - "2"
+          - "3"
         exclude:
           - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico'   && github.event.inputs.pico_board != '') && 'pico'   || '' }}
           - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico_w' && github.event.inputs.pico_board != '') && 'pico_w' || '' }}
@@ -159,6 +161,7 @@ jobs:
           - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '0' && github.event.inputs.pico_mode != '') && '0' || '' }}
           - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '1' && github.event.inputs.pico_mode != '') && '1' || '' }}
           - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '2' && github.event.inputs.pico_mode != '') && '2' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '3' && github.event.inputs.pico_mode != '') && '3' || '' }}
 
     steps:
       - name: Checkout firmware source
