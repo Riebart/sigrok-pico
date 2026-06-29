@@ -871,3 +871,5 @@ void core1_entry()
 } // core1_entry
 
 #endif // PIN_TEST_MODE
+
+#include "main.c"
