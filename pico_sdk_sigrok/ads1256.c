@@ -473,12 +473,13 @@ static void run_multi_channel(void)
  * Restored to an unconditional for(;;) so core1 always waits for the next
  * ads1256_core1_run signal regardless of how the previous run ended.
  *
- * Issue #2 fix: after an overflow, core0 may not yet have cleared
- * ads1256_core1_run.  Without the post-run fence, core1 would immediately
- * loop back, clear the ring pointers, and restart sampling while core0 was
- * still draining the old data -- a race that corrupts acquisition state.
- * The fence `while (ads1256_core1_run) tight_loop_contents()` ensures core1
- * waits for core0 to deassert the run flag before starting a new cycle.
+ * Issue #2 fix: the post-run fence must be unconditional.  Core0 may not
+ * yet have cleared ads1256_core1_run on any exit path -- overflow, host
+ * '+' stop, or fixed-length completion.  Without an unconditional fence,
+ * Core 1 races back to the top of for(;;), resets ring_wr/rd/overflow, and
+ * restarts sampling while Core 0 is still draining the old buffer or hasn't
+ * finished its own cleanup.  Spinning here on every exit until Core 0
+ * deasserts ads1256_core1_run eliminates the race on all exit paths.
  * ----------------------------------------------------------------------- */
 void ads1256_core1_entry(void)
 {
@@ -503,15 +504,13 @@ void ads1256_core1_entry(void)
         else
             run_single_channel();
 
-        /* Post-run fence (Issue #2): if we exited due to a ring overflow,
-         * core0 may not yet have cleared ads1256_core1_run.  Spin here
-         * until it does so that we do not race back into sampling and
-         * overwrite the buffer while core0 is still draining it. */
-        if (ads1256_ring_overflow)
-        {
-            while (ads1256_core1_run)
-                tight_loop_contents();
-        }
+        /* Post-run fence (Issue #2): unconditionally wait for core0 to
+         * deassert ads1256_core1_run before looping back to reset the ring
+         * buffer.  This prevents Core 1 from racing ahead on any exit path
+         * (overflow, host stop, or fixed-length done) and corrupting
+         * acquisition state while Core 0 is still draining or cleaning up. */
+        while (ads1256_core1_run)
+            tight_loop_contents();
     }
 }
 
