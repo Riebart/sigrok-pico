@@ -111,9 +111,9 @@
 //
 // 8 is just the nicest round number that is contiguous in both cases, it could be 10.
 #ifdef ADS1256_ENABLE_STDIO_UART
-#define NUM_D_CHAN 4 // When we need the debug UART, limit the digital channels so we get the UART
+#define NUM_D_CHAN 0 // 4 // When we need the debug UART, limit the digital channels so we get the UART
 #else
-#define NUM_D_CHAN 8
+#define NUM_D_CHAN 0 // 8
 #endif
 
 #define GPIO_D_MASK 0x0000FFFF  // Mask of bits for digital inputs (GP0-GP15)
