@@ -21,6 +21,21 @@
 #include "hardware/spi.h"
 
 /* -----------------------------------------------------------------------
+ * Issue #8 fix: compile-time assertion that ADS1256_RING_BYTES is an exact
+ * multiple of ADS1256_A_BYTES (3).  If a future edit to either constant
+ * breaks alignment, the write sequence
+ *   ads1256_ring[wr]     = enc[0];
+ *   ads1256_ring[wr + 1] = enc[1];
+ *   ads1256_ring[wr + 2] = enc[2];
+ * in run_single_channel() would write past the end of the array on the
+ * wrap-around sample.  The assert turns that silent OOB into a build error.
+ * ----------------------------------------------------------------------- */
+_Static_assert(
+    (ADS1256_RING_BYTES % ADS1256_A_BYTES) == 0,
+    "ADS1256_RING_BYTES must be an exact multiple of ADS1256_A_BYTES (3)"
+);
+
+/* -----------------------------------------------------------------------
  * ADS1256 register addresses (Table 23, ADS1256 datasheet SBAS288)
  * ----------------------------------------------------------------------- */
 #define ADS1256_REG_STATUS 0x00

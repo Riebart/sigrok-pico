@@ -300,13 +300,23 @@ int main()
       // Divide capture buf evenly based on channel enables
       // d_size is aligned to 4 bytes because pio operates on words
       // These are the sizes for each half buffer in bytes
-      // Calculate relative size in terms of nibbles which is the smallest unit, thus a_chan_cnt is multiplied by 2
-      // Nibble size storage is only allow for D4 mode with no analog channels enabled
-      // For instance a D0..D5 with A0 would give 1/2 the storage to digital and 1/2 to analog
+      // Calculate relative size in terms of nibbles which is the smallest unit.
+      // For onboard ADC modes, each analog sample is 1 byte = 2 nibbles, so a_nibbles = a_chan_cnt * 2.
+      // For ADS1256 mode, each analog sample is ADS1256_A_BYTES (3) bytes = 6 nibbles per channel.
+      // Using the correct nibble count ensures d_size, a_size, and samples_per_half are all
+      // proportionally correct and that the half_bytes trigger in run_multi_channel() fires
+      // at the right boundary.
       uint32_t d_nibbles, a_nibbles, t_nibbles; // digital, analog and total nibbles
-      d_nibbles = dev.d_nps;                    // digital is in grous of 4 bits
+      d_nibbles = dev.d_nps;                    // digital is in groups of 4 bits
+#ifdef ADS1256_MODE
+      // Issue #5 fix: ADS1256 produces 3 wire bytes per sample, not 1.
+      // a_nibbles must reflect the true byte width so that chunk_size,
+      // dev.a_size, and samples_per_half are computed correctly.
+      a_nibbles = dev.a_chan_cnt * ADS1256_A_BYTES * 2;
+#else
       // Note that this code only supports 7 bit accurate ADC modes.
       a_nibbles = dev.a_chan_cnt * 2; // 1 byte per sample
+#endif
       t_nibbles = d_nibbles + a_nibbles;
       // total buf size must be a multiple of a_nibbles*2, d_nibbles*8, and t_nibbles so that
       // division is always in whole samples.
@@ -796,13 +806,8 @@ int main()
 // memory buffer management to support sample rates that were substantially higher than the
 // stream rates across USB.  Thus there wasn't a compelling reason to have it.
 // It's left as an example as to how the masks could be used.
-//   To fully support a HW based triggering, a precapture ring buffer of both digital and analog samples
-// would need to be created an managed to store and send pretrigger values.
-// The ring buffer would need to support RLEs and would need to ensure it was sent before sending
-// other samples capture by the DMA after the trigger event.
 /*
 //   uint32_t tlval; Trigger last val
-//   tlval=d->tlval;
 //   uint32_t all_mask=d->lvl0mask | d->lvl1mask| d->risemask | d->fallmask | d->chgmask;
 
 
