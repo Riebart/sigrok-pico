@@ -223,7 +223,7 @@ jobs:
           SHA="${{ needs.check-changes.outputs.short_sha }}"
           BOARD="${{ matrix.pico_board }}"
           MODE="${{ matrix.pico_mode }}"
-          BASE="sigrok-pico-ads1256-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}-mode${MODE}"
+          BASE="sigrok-pico-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}-mode${MODE}"
 
           echo "artifact_name=${BASE}" >> "$GITHUB_OUTPUT"
           echo "uf2_name=${BASE}.uf2"  >> "$GITHUB_OUTPUT"

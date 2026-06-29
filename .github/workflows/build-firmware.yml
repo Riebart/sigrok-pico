@@ -1,7 +1,7 @@
 # =============================================================================
 # .github/workflows/build-firmware.yml
 #
-# Builds the sigrok-pico ADS1256 firmware and publishes a GitHub Release.
+# Builds the sigrok-pico firmware and publishes a GitHub Release.
 #
 # Matrix: pico_board x pico_mode = up to 9 parallel jobs
 #   pico_board : pico | pico_w | pico2
@@ -171,7 +171,7 @@ jobs:
           BOARD="${{ matrix.pico_board }}"
           MODE="${{ matrix.pico_mode }}"
           DATE=$(date -u +'%Y-%m-%d')
-          BASE="sigrok-pico-ads1256-${VERSION}-${BOARD}-mode${MODE}-${DATE}"
+          BASE="sigrok-pico-${VERSION}-${BOARD}-mode${MODE}-${DATE}"
 
           echo "version=${VERSION}"        >> "$GITHUB_OUTPUT"
           echo "artifact_name=${BASE}"     >> "$GITHUB_OUTPUT"
@@ -242,7 +242,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: "sigrok-pico ADS1256 ${{ steps.version.outputs.version }}"
+          name: "sigrok-pico ${{ steps.version.outputs.version }}"
           files: release/**
           generate_release_notes: true
           draft: ${{ github.event.inputs.draft_release == 'true' || false }}
