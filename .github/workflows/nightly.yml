@@ -3,9 +3,12 @@
 #
 # Nightly pre-release builds from working/feature branches.
 #
-# Triggers:
-#   • Cron: 02:00 UTC daily (against the default branch)
-#   • workflow_dispatch: manually for any branch/board
+# Matrix: pico_board x pico_mode = up to 9 parallel jobs
+#   pico_board : pico | pico_w | pico2
+#   pico_mode  : 0 (baseline 21D+3A) | 1 (digital-26) | 2 (digital-32)
+#
+# IMPORTANT: PICO_MODE is passed as a CMake cache variable (-DPICO_MODE=N),
+# NOT via -DCMAKE_C_FLAGS. See build-firmware.yml for the full explanation.
 # =============================================================================
 
 name: Nightly Build
@@ -20,18 +23,29 @@ on:
         required: false
         default: ""
       pico_board:
-        description: "PICO_BOARD target"
+        description: "PICO_BOARD target ('all' builds all boards)"
         required: true
-        default: "pico"
+        default: "all"
         type: choice
         options:
+          - all
           - pico
           - pico_w
           - pico2
+      pico_mode:
+        description: "PICO_MODE ('all' builds all modes: 0=baseline 1=dig26 2=dig32)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "0"
+          - "1"
+          - "2"
       pico_sdk_version:
         description: "Pico SDK version tag"
         required: false
-        default: "2.1.1"
+        default: "2.1.0"
       force_build:
         description: "Build even if no new commits since last nightly?"
         required: false
@@ -47,14 +61,10 @@ defaults:
     shell: bash
 
 env:
-  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.1' }}
-  PICO_BOARD: ${{ github.event.inputs.pico_board       || 'pico'  }}
+  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.0' }}
   BUILD_TYPE: Release
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 1 — Guard: skip if no new commits since last nightly
-  # ═══════════════════════════════════════════════════════════════════════════
   check-changes:
     name: Check for new commits
     runs-on: ubuntu-24.04
@@ -70,7 +80,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
@@ -98,7 +108,7 @@ jobs:
           echo "date=${DATE}"               >> "$GITHUB_OUTPUT"
 
           if [[ "${FORCE}" == "true" ]]; then
-            echo "Force flag set — building regardless."
+            echo "Force flag set - building regardless."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -107,7 +117,7 @@ jobs:
                        --sort=-version:refname | head -1 || true)
 
           if [[ -z "${LAST_TAG}" ]]; then
-            echo "No previous nightly — first build."
+            echo "No previous nightly - first build."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -116,53 +126,64 @@ jobs:
           echo "Commits since ${LAST_TAG}: ${COMMIT_COUNT}"
 
           if [[ "${COMMIT_COUNT}" -eq 0 ]]; then
-            echo "No new commits — skipping."
+            echo "No new commits - skipping."
             echo "should_build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "New commits found — proceeding."
+            echo "New commits found - proceeding."
             echo "should_build=true"  >> "$GITHUB_OUTPUT"
           fi
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Build firmware
-  # ═══════════════════════════════════════════════════════════════════════════
   build:
-    name: Build nightly firmware
+    name: Build nightly (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }})
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
 
-    outputs:
-      artifact_name: ${{ steps.meta.outputs.artifact_name }}
-      uf2_name: ${{ steps.meta.outputs.uf2_name }}
-      elf_name: ${{ steps.meta.outputs.elf_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        pico_board:
+          - pico
+          - pico_w
+          - pico2
+        pico_mode:
+          - "0"
+          - "1"
+          - "2"
+        exclude:
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico'   && github.event.inputs.pico_board != '') && 'pico'   || '' }}
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico_w' && github.event.inputs.pico_board != '') && 'pico_w' || '' }}
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico2'  && github.event.inputs.pico_board != '') && 'pico2'  || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '0' && github.event.inputs.pico_mode != '') && '0' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '1' && github.event.inputs.pico_mode != '') && '1' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '2' && github.event.inputs.pico_mode != '') && '2' || '' }}
 
     steps:
-      - name: Checkout firmware source (${{ needs.check-changes.outputs.branch_name }})
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Checkout firmware source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Cache Pico SDK
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         id: pico-sdk-cache
         with:
           path: pico-sdk
           key: pico-sdk-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
       - name: Cache Pico SDK submodules
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: pico-sdk/lib
           key: pico-sdk-submodules-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
       - name: Checkout Pico SDK ${{ env.PICO_SDK_VERSION }}
         if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           repository: raspberrypi/pico-sdk
           ref: ${{ env.PICO_SDK_VERSION }}
@@ -193,62 +214,50 @@ jobs:
           cp pico-sdk/external/pico_sdk_import.cmake \
              pico_sdk_sigrok/pico_sdk_import.cmake
 
-      # ── Compute versioned filenames from branch + date + sha ──────────────
-      - name: Resolve build metadata and filenames
+      - name: Resolve build metadata
         id: meta
         run: |
           BRANCH="${{ needs.check-changes.outputs.branch_name }}"
           BRANCH_SLUG="${BRANCH//\//-}"
           DATE="${{ needs.check-changes.outputs.date }}"
           SHA="${{ needs.check-changes.outputs.short_sha }}"
-          BOARD="${{ env.PICO_BOARD }}"
+          BOARD="${{ matrix.pico_board }}"
+          MODE="${{ matrix.pico_mode }}"
+          BASE="sigrok-pico-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}-mode${MODE}"
 
-          # e.g. sigrok-pico-ads1256-nightly-feature-ads1256-2026-06-28-a3f9c1d-pico
-          BASE="sigrok-pico-ads1256-nightly-${BRANCH_SLUG}-${DATE}-${SHA}-${BOARD}"
-          UF2_NAME="${BASE}.uf2"
-          ELF_NAME="${BASE}.elf"
-
-          echo "artifact_name=${BASE}"  >> "$GITHUB_OUTPUT"
-          echo "uf2_name=${UF2_NAME}"   >> "$GITHUB_OUTPUT"
-          echo "elf_name=${ELF_NAME}"   >> "$GITHUB_OUTPUT"
-
-          echo "UF2 file : ${UF2_NAME}"
-          echo "ELF file : ${ELF_NAME}"
+          echo "artifact_name=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "uf2_name=${BASE}.uf2"  >> "$GITHUB_OUTPUT"
+          echo "elf_name=${BASE}.elf"  >> "$GITHUB_OUTPUT"
 
       - name: Configure CMake
         run: |
           cmake -B build \
                 -S pico_sdk_sigrok \
                 -G "Unix Makefiles" \
-                -DPICO_BOARD=${{ env.PICO_BOARD }} \
+                -DPICO_BOARD=${{ matrix.pico_board }} \
+                -DPICO_MODE=${{ matrix.pico_mode }} \
                 -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-                -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk"
+                -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
+                -DCMAKE_MODULE_PATH="${GITHUB_WORKSPACE}"
 
       - name: Build firmware
         run: cmake --build build -- -j $(nproc)
 
-      # ── Stage with versioned filenames ────────────────────────────────────
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp build/pico_sdk_sigrok.uf2  "artifacts/${{ steps.meta.outputs.uf2_name }}"
-          cp build/pico_sdk_sigrok.elf  "artifacts/${{ steps.meta.outputs.elf_name }}"
-          cp LICENSE                     artifacts/
-          cp README.md                   artifacts/
-          echo "--- Staged artifacts ---"
+          cp build/pico_sdk_sigrok.uf2 "artifacts/${{ steps.meta.outputs.uf2_name }}"
+          cp build/pico_sdk_sigrok.elf "artifacts/${{ steps.meta.outputs.elf_name }}"
           ls -lh artifacts/
 
       - name: Upload nightly artifact
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
           path: artifacts/
           if-no-files-found: error
           retention-days: 7
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 3 — Publish rolling nightly pre-release
-  # ═══════════════════════════════════════════════════════════════════════════
   publish-nightly:
     name: Publish nightly pre-release
     needs: [check-changes, build]
@@ -259,7 +268,7 @@ jobs:
 
     steps:
       - name: Checkout (for tag operations)
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ github.event.inputs.branch || github.ref }}
           fetch-depth: 0
@@ -270,14 +279,16 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Download nightly artifact
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - name: Download all board x mode artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ needs.build.outputs.artifact_name }}
           path: ./release
+          merge-multiple: true
 
-      - name: Show release files
-        run: ls -lh release/
+      - name: Add shared files
+        run: |
+          cp LICENSE ./release/
+          cp README.md ./release/
 
       - name: Delete stale nightly release for today
         env:
@@ -300,12 +311,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.check-changes.outputs.nightly_tag }}
-          name: "🌙 Nightly · ${{ needs.check-changes.outputs.branch_name }} · ${{ needs.check-changes.outputs.short_sha }}"
-          files: |
-            release/${{ needs.build.outputs.uf2_name }}
-            release/${{ needs.build.outputs.elf_name }}
-            release/LICENSE
-            release/README.md
+          name: "Nightly - ${{ needs.check-changes.outputs.branch_name }} - ${{ needs.check-changes.outputs.short_sha }}"
+          files: release/**
           generate_release_notes: true
           prerelease: true
           draft: false

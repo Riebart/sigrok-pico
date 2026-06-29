@@ -32,6 +32,23 @@ add_executable(pico_sdk_sigrok
   sr_device.c
 )
 
+# ---------------------------------------------------------------------------
+# PICO_MODE — selects the channel/sample-rate configuration:
+#   0  baseline: 21 digital + 3 analog  (default)
+#   1  digital-26: 26 digital channels
+#   2  digital-32: 32 digital channels
+#
+# Pass from the cmake command line as:   -DPICO_MODE=2
+# The CI workflows inject this as a CMake cache variable; it must be
+# forwarded here to the C preprocessor so that #if PICO_MODE == N
+# conditionals in the source files are evaluated correctly.
+# ---------------------------------------------------------------------------
+if(NOT DEFINED PICO_MODE)
+    set(PICO_MODE 0 CACHE STRING "Sigrok-pico channel mode (0=baseline, 1=dig26, 2=dig32)")
+endif()
+message(STATUS "Building with PICO_MODE=${PICO_MODE}")
+target_compile_definitions(pico_sdk_sigrok PUBLIC PICO_MODE=${PICO_MODE})
+
 pico_enable_stdio_usb(pico_sdk_sigrok 1)
 pico_enable_stdio_uart(pico_sdk_sigrok 0)
 
@@ -44,6 +61,7 @@ target_link_libraries(
     hardware_dma
     hardware_pio
     hardware_sync
+    hardware_spi
 #    hardware_sio
 #    hardware_gpio
 #    hardware_timer

@@ -27,7 +27,14 @@
 // Note: In the wireless versions, GPIO23-25 control the wifi chip, 23 and 24
 //aren't available in the PICO, and 25 controls the LED. So while the LED is lost,
 //there is no change in available channels for sampling.
+//
+// PICO_MODE is normally set via CMake: -DPICO_MODE=N
+// target_compile_definitions() in CMakeLists.txt passes it to the compiler.
+// The #ifndef guard here ensures that compiler-supplied value takes precedence.
+// If not supplied (e.g. local build without -DPICO_MODE), defaults to 2.
+#ifndef PICO_MODE
 #define PICO_MODE 2 //0 is baseline, 1 is digital 26, 2 is digital 32
+#endif
 //WARNING: USE PIN_TEST_MODE with extreme caution!!!!
 //If set, treat the inputs (A&D) to be outputs so that the device can drive values for
 //turn-on testing.  Enabling this allows all modes to be tested without having to drive
@@ -76,6 +83,15 @@
   #define UART_EN 0
   #define PIN_TEST_MASK 0xFFFFFFFF
 #endif
+
+// On Pico W the LED is on the CYW43 chip, not a GPIO, so PICO_DEFAULT_LED_PIN
+// is not defined by the board headers. Clear HAS_LED when the board does not
+// expose the LED as a directly addressable GPIO pin so that gpio_init() calls
+// guarded by #ifdef HAS_LED do not produce an undeclared-identifier error.
+#if defined(HAS_LED) && !defined(PICO_DEFAULT_LED_PIN)
+  #undef HAS_LED
+#endif
+
 //These two enable debug print outs of D4 generation, D4_DBG2 is higher verbosity
 //#define D4_DBG 1
 //#define D4_DBG2 2

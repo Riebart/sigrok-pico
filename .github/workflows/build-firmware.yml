@@ -1,12 +1,20 @@
 # =============================================================================
 # .github/workflows/build-firmware.yml
 #
-# Builds the sigrok-pico ADS1256 firmware and publishes a GitHub Release.
+# Builds the sigrok-pico firmware and publishes a GitHub Release.
 #
-# Triggers:
-#   • Push a tag like "v1.2.3"  → full build + publish release
-#   • Pull request to main      → build-only CI check
-#   • Manual workflow_dispatch  → build + publish release with custom inputs
+# Matrix: pico_board x pico_mode = up to 9 parallel jobs
+#   pico_board : pico | pico_w | pico2
+#   pico_mode  : 0 (baseline 21D+3A) | 1 (digital-26) | 2 (digital-32)
+#
+# IMPORTANT: PICO_MODE is passed as a CMake cache variable (-DPICO_MODE=N),
+# NOT via -DCMAKE_C_FLAGS. Setting CMAKE_C_FLAGS on the cmake command line
+# overwrites the Pico SDK toolchain flags (-mcpu=cortex-m0plus -mthumb),
+# causing the assembler to default to 32-bit ARM mode and reject Thumb-2
+# instructions (PRIMASK, cpsid i, dmb).
+#
+# Your CMakeLists.txt must propagate the value to the compiler:
+#   target_compile_definitions(pico_sdk_sigrok PUBLIC PICO_MODE=${PICO_MODE})
 # =============================================================================
 
 name: Build & Release Firmware
@@ -26,18 +34,29 @@ on:
         required: true
         default: "v0.0.1"
       pico_board:
-        description: "PICO_BOARD target"
+        description: "PICO_BOARD target ('all' builds all boards)"
         required: true
-        default: "pico"
+        default: "all"
         type: choice
         options:
+          - all
           - pico
           - pico_w
           - pico2
+      pico_mode:
+        description: "PICO_MODE ('all' builds all modes: 0=baseline 1=dig26 2=dig32)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "0"
+          - "1"
+          - "2"
       pico_sdk_version:
         description: "Pico SDK version tag"
         required: false
-        default: "2.1.1"
+        default: "2.1.0"
       draft_release:
         description: "Publish as draft release?"
         required: false
@@ -53,49 +72,61 @@ defaults:
     shell: bash
 
 env:
-  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.1' }}
-  PICO_BOARD:       ${{ github.event.inputs.pico_board       || 'pico'  }}
-  BUILD_TYPE:       Release
+  PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.0' }}
+  BUILD_TYPE: Release
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 1 — Build firmware
-  # ═══════════════════════════════════════════════════════════════════════════
   build:
-    name: Build (${{ github.event.inputs.pico_board || 'pico' }})
+    name: Build (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }})
     runs-on: ubuntu-24.04
     permissions:
       contents: read
 
+    strategy:
+      fail-fast: false
+      matrix:
+        pico_board:
+          - pico
+          - pico_w
+          - pico2
+        pico_mode:
+          - "0"
+          - "1"
+          - "2"
+        exclude:
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico'   && github.event.inputs.pico_board != '') && 'pico'   || '' }}
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico_w' && github.event.inputs.pico_board != '') && 'pico_w' || '' }}
+          - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico2'  && github.event.inputs.pico_board != '') && 'pico2'  || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '0' && github.event.inputs.pico_mode != '') && '0' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '1' && github.event.inputs.pico_mode != '') && '1' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '2' && github.event.inputs.pico_mode != '') && '2' || '' }}
+
     outputs:
-      artifact_name: ${{ steps.meta.outputs.artifact_name }}
-      version:        ${{ steps.meta.outputs.version }}
-      uf2_name:       ${{ steps.meta.outputs.uf2_name }}
-      elf_name:       ${{ steps.meta.outputs.elf_name }}
+      version: ${{ steps.meta.outputs.version }}
 
     steps:
       - name: Checkout firmware source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Cache Pico SDK
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         id: pico-sdk-cache
         with:
           path: pico-sdk
           key: pico-sdk-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
       - name: Cache Pico SDK submodules
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: pico-sdk/lib
           key: pico-sdk-submodules-${{ env.PICO_SDK_VERSION }}-${{ runner.os }}
 
       - name: Checkout Pico SDK ${{ env.PICO_SDK_VERSION }}
         if: steps.pico-sdk-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           repository: raspberrypi/pico-sdk
           ref: ${{ env.PICO_SDK_VERSION }}
@@ -126,8 +157,7 @@ jobs:
           cp pico-sdk/external/pico_sdk_import.cmake \
              pico_sdk_sigrok/pico_sdk_import.cmake
 
-      # ── Resolve version and compute all output filenames here ─────────────
-      - name: Resolve build metadata and filenames
+      - name: Resolve build metadata
         id: meta
         run: |
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
@@ -138,58 +168,45 @@ jobs:
             VERSION="dev-$(git rev-parse --short HEAD)"
           fi
 
-          BOARD="${{ env.PICO_BOARD }}"
+          BOARD="${{ matrix.pico_board }}"
+          MODE="${{ matrix.pico_mode }}"
           DATE=$(date -u +'%Y-%m-%d')
+          BASE="sigrok-pico-${VERSION}-${BOARD}-mode${MODE}-${DATE}"
 
-          # e.g. sigrok-pico-ads1256-v1.0.0-pico-2026-06-28
-          BASE="sigrok-pico-ads1256-${VERSION}-${BOARD}-${DATE}"
-          UF2_NAME="${BASE}.uf2"
-          ELF_NAME="${BASE}.elf"
-          ARTIFACT="${BASE}"
-
-          echo "version=${VERSION}"          >> "$GITHUB_OUTPUT"
-          echo "artifact_name=${ARTIFACT}"   >> "$GITHUB_OUTPUT"
-          echo "uf2_name=${UF2_NAME}"        >> "$GITHUB_OUTPUT"
-          echo "elf_name=${ELF_NAME}"        >> "$GITHUB_OUTPUT"
-
-          echo "Version  : ${VERSION}"
-          echo "UF2 file : ${UF2_NAME}"
-          echo "ELF file : ${ELF_NAME}"
+          echo "version=${VERSION}"        >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${BASE}"     >> "$GITHUB_OUTPUT"
+          echo "uf2_name=${BASE}.uf2"      >> "$GITHUB_OUTPUT"
+          echo "elf_name=${BASE}.elf"      >> "$GITHUB_OUTPUT"
 
       - name: Configure CMake
         run: |
           cmake -B build \
                 -S pico_sdk_sigrok \
                 -G "Unix Makefiles" \
-                -DPICO_BOARD=${{ env.PICO_BOARD }} \
+                -DPICO_BOARD=${{ matrix.pico_board }} \
+                -DPICO_MODE=${{ matrix.pico_mode }} \
                 -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-                -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk"
+                -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
+                -DCMAKE_MODULE_PATH="${GITHUB_WORKSPACE}"
 
       - name: Build firmware
         run: cmake --build build -- -j $(nproc)
 
-      # ── Stage with versioned filenames ────────────────────────────────────
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp build/pico_sdk_sigrok.uf2  "artifacts/${{ steps.meta.outputs.uf2_name }}"
-          cp build/pico_sdk_sigrok.elf  "artifacts/${{ steps.meta.outputs.elf_name }}"
-          cp LICENSE                     artifacts/
-          cp README.md                   artifacts/
-          echo "--- Staged artifacts ---"
+          cp build/pico_sdk_sigrok.uf2 "artifacts/${{ steps.meta.outputs.uf2_name }}"
+          cp build/pico_sdk_sigrok.elf "artifacts/${{ steps.meta.outputs.elf_name }}"
           ls -lh artifacts/
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.meta.outputs.artifact_name }}
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Publish GitHub Release
-  # ═══════════════════════════════════════════════════════════════════════════
   release:
     name: Create GitHub Release
     needs: build
@@ -201,26 +218,33 @@ jobs:
       contents: write
 
     steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ${{ needs.build.outputs.artifact_name }}
           path: ./release
+          merge-multiple: true
 
-      - name: Show release files
-        run: ls -lh release/
+      - name: Add shared files
+        run: |
+          cp LICENSE ./release/
+          cp README.md ./release/
+
+      - name: Resolve release version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build.outputs.version }}
-          name: "sigrok-pico ADS1256 ${{ needs.build.outputs.version }}"
-          files: |
-            release/${{ needs.build.outputs.uf2_name }}
-            release/${{ needs.build.outputs.elf_name }}
-            release/LICENSE
-            release/README.md
+          tag_name: ${{ steps.version.outputs.version }}
+          name: "sigrok-pico ${{ steps.version.outputs.version }}"
+          files: release/**
           generate_release_notes: true
-          draft:      ${{ github.event.inputs.draft_release == 'true' || false }}
-          prerelease: ${{ contains(needs.build.outputs.version, '-') }}
+          draft: ${{ github.event.inputs.draft_release == 'true' || false }}
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           token: ${{ secrets.GITHUB_TOKEN }}
