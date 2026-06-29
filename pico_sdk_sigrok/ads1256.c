@@ -179,15 +179,18 @@ void ads1256_hw_init(void)
  * Single-ended only (AINCOM = AGND): negative raw values indicate noise
  * below ground reference; clamp to 0 before encoding.
  *
- * Encoding:
+ * Encoding (MSB first, matching libsigrok process_slice() expectations):
  *   V = (uint32_t) max(raw24, 0) >> ADS1256_A_RSHIFT   [21-bit unsigned]
- *   out[0] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14
+ *   out[0] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14  (most significant)
  *   out[1] = 0x80 | ((V >>  7) & 0x7F)   bits 13..7
- *   out[2] = 0x80 | ( V        & 0x7F)   bits  6..0
+ *   out[2] = 0x80 | ( V        & 0x7F)   bits  6..0   (least significant)
  *
  * The 0x80 framing bit is required by the libsigrok raspberrypi-pico
  * protocol: process_slice() reads (buffer[rdptr] - 0x80) for each byte,
  * so all analog bytes must be >= 0x80.
+ *
+ * libsigrok reassembles as: (b[0]-0x80)<<14 | (b[1]-0x80)<<7 | (b[2]-0x80)
+ * so out[0] MUST carry the most-significant 7 bits.
  *
  * Scale reported by the 'a' command (sr_device.c):
  *   ADS1256_SCALE_UV  = (ADS1256_VREF_UV / ADS1256_PGA_GAIN) / 2^20
@@ -201,9 +204,11 @@ void ads1256_encode_sample(int32_t raw24, uint8_t out[ADS1256_A_BYTES])
     if (raw24 < 0)
         raw24 = 0;
     uint32_t v = (uint32_t)raw24 >> ADS1256_A_RSHIFT;
-    out[0] = 0x80 | (v & 0x7F);
-    out[1] = 0x80 | ((v >> 7) & 0x7F);
-    out[2] = 0x80 | ((v >> 14) & 0x7F);
+    /* FIX: MSB first -- out[0] must hold the most-significant 7 bits so that
+     * libsigrok's process_slice() reassembly ((b[0]-0x80)<<14 | ...) is correct. */
+    out[0] = 0x80 | ((v >> 14) & 0x7F); /* bits 20..14 */
+    out[1] = 0x80 | ((v >>  7) & 0x7F); /* bits 13..7  */
+    out[2] = 0x80 | ( v        & 0x7F); /* bits  6..0  */
 }
 
 /* -----------------------------------------------------------------------
@@ -254,7 +259,8 @@ static int32_t ads1256_read24_rdatac(void)
  *   5. On exit: deassert CS, send SDATAC
  *
  * Ring buffer overflow: if the write pointer would lap the read pointer,
- * set ads1256_ring_overflow = true and exit.
+ * set ads1256_ring_overflow = true and exit.  The outer loop in
+ * ads1256_core1_entry() will restart the acquisition.
  * ----------------------------------------------------------------------- */
 static void run_single_channel(void)
 {
@@ -303,8 +309,6 @@ static void run_single_channel(void)
         if (next_wr == ads1256_ring_rd)
         {
             ads1256_ring_overflow = true;
-            // The wrapper of this call will restart on overflow conditions, so we can quit "safely".
-            // ALthough this goto is gnarly, and gonna make for leaks.
             goto done_rdatac;
         }
 
@@ -357,9 +361,6 @@ static void run_multi_channel(void)
     if (nchan == 0)
         return;
 
-    // uint8_t *buf_ptrs[2] = {
-    //     (uint8_t *)(uintptr_t)dev.abuf0_start,
-    //     (uint8_t *)(uintptr_t)dev.abuf1_start};
     extern uint8_t *capture_buf;
     uint8_t *buf_ptrs[2] = {
         capture_buf + dev.abuf0_start,
@@ -462,37 +463,42 @@ static void run_multi_channel(void)
  * Core1 main function.  Launched from pico_sdk_sigrok.c via
  * multicore_launch_core1(ads1256_core1_entry).
  *
- * Calls ads1256_hw_init() once after core1 starts, then loops:
+ * Calls ads1256_hw_init() once after core1 starts, then loops forever:
  *   - idles (tight loop) until core0 sets ads1256_core1_run = true
  *   - dispatches to run_single_channel() or run_multi_channel()
- *   - clears ads1256_core1_run after sampling ends
+ *   - ring overflow is handled by restarting: overflow flag is cleared
+ *     before re-entering the idle wait so the next acquisition is clean
+ *
+ * FIX: outer loop was `while (!ads1256_ring_overflow)` which permanently
+ * exited after the first overflow (which always happens when core0 has
+ * not yet drained the ring).  Changed to for(;;) so core1 always
+ * restarts and waits for the next ads1256_core1_run signal.
  * ----------------------------------------------------------------------- */
 void ads1256_core1_entry(void)
 {
     ads1256_hw_init();
 
-    // for (;;)
-    while (!ads1256_ring_overflow)
+    for (;;)
     {
-        /* Idle until core0 signals start of acquisition */
-        while (!ads1256_core1_run)
-            tight_loop_contents();
-
-        /* Reset ring buffer for each new run */
+        /* Reset ring buffer state before each acquisition, including
+         * clearing any overflow flag from the previous run. */
         ads1256_ring_wr = 0;
         ads1256_ring_rd = 0;
         ads1256_ring_overflow = false;
+
+        /* Idle until core0 signals start of acquisition */
+        while (!ads1256_core1_run)
+            tight_loop_contents();
 
         if (ads1256_multichan)
             run_multi_channel();
         else
             run_single_channel();
 
-        // If we get here because we overflowed the ring, just restart from scratch.
+        /* ads1256_core1_run will be cleared by core0 when acquisition ends,
+         * or may still be true after a ring overflow (core0 will drain and
+         * restart).  Either way, loop back to the idle wait. */
     }
-
-    /* Signal core0 that sampling has finished */
-    ads1256_core1_run = false;
 }
 
 #endif /* ADS1256_MODE */
