@@ -22,6 +22,10 @@ project(pico_sdk_sigrok C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(pico_sdk_sigrok PRIVATE ADS1256_ENABLE_STDIO_UART=1)
+endif()
+
 # ADS1256 compile-time overrides (PICO_MODE 3 only).
 # Pass on the cmake command line, e.g.:
 #   cmake -DADS1256_PGA_GAIN=2 -DADS1256_BUF_ENABLE=1 ..
@@ -69,8 +73,22 @@ endif()
 message(STATUS "Building with PICO_MODE=${PICO_MODE}")
 target_compile_definitions(pico_sdk_sigrok PUBLIC PICO_MODE=${PICO_MODE})
 
-pico_enable_stdio_usb(pico_sdk_sigrok 1)
-pico_enable_stdio_uart(pico_sdk_sigrok 0)
+if(DEFINED ADS1256_ENABLE_STDIO_UART AND ADS1256_ENABLE_STDIO_UART)
+    message(STATUS "ADS1256_ENABLE_STDIO_UART: stdio routed to UART1 on GP8/GP9")
+    add_compile_definitions(ADS1256_ENABLE_STDIO_UART=1)
+
+    pico_enable_stdio_usb(pico_sdk_sigrok 0)
+    pico_enable_stdio_uart(pico_sdk_sigrok 1)
+
+    target_compile_definitions(pico_sdk_sigrok PRIVATE
+        PICO_DEFAULT_UART=0
+        PICO_DEFAULT_UART_TX_PIN=12
+        PICO_DEFAULT_UART_RX_PIN=13
+    )
+else()
+    pico_enable_stdio_usb(pico_sdk_sigrok 1)
+    pico_enable_stdio_uart(pico_sdk_sigrok 0)
+endif()
 
 pico_add_extra_outputs(pico_sdk_sigrok)
 

@@ -109,8 +109,12 @@
 // When using SPI0, GP00-GP03 are used for SPI and 04 for DRDY, so GP 5,6,7,8,9,10,11,12,13,14,15
 // When using SPI1, GP12-GP15 are used for SPI and 29 for DRDY, so GP 0,1,2,3,4,5,6,7,8,9,10,11
 //
-// 8 is just the nicest round number that is contiguous in both cases.
+// 8 is just the nicest round number that is contiguous in both cases, it could be 10.
+#ifdef ADS1256_ENABLE_STDIO_UART
+#define NUM_D_CHAN 4 // When we need the debug UART, limit the digital channels so we get the UART
+#else
 #define NUM_D_CHAN 8
+#endif
 
 #define GPIO_D_MASK 0x0000FFFF  // Mask of bits for digital inputs (GP0-GP15)
 #define MEM_D_MASK_L 0x0000FFFF // lower mask of bits for digital inputs

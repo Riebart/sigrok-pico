@@ -363,7 +363,7 @@ uint32_t send_slices_D4(sr_device_t *d, uint8_t *dbuf)
 } // send_slices_D4
 
 // Send a digital sample of multiple bytes with the 7 bit encoding
-void inline tx_d_samp(sr_device_t *d, uint32_t cval)
+static void inline tx_d_samp(sr_device_t *d, uint32_t cval)
 {
   for (char b = 0; b < d->d_tx_bps; b++)
   {
@@ -413,7 +413,7 @@ forward txbuf bytes to USB to prevent txbufidx from overflowing the size
 of txbuf. We do not always push to USB to reduce its impact
 on performance.
  */
-void inline check_rle()
+static void inline check_rle()
 {
   //  Dprintf("RLEx %d\n\r",rlecnt);
   while (rlecnt >= 1568)
