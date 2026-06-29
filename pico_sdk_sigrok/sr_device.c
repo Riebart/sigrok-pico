@@ -271,8 +271,8 @@ int process_char(sr_device_t *d, char charin)
          if (d->cmdstr[1] == 'D')
          {
 #ifdef ADS1256_MODE
-            // D0-D15 map directly to GP0-GP15
-            tmpint2 = tmpint; // TODOADS1256 No they don't, the SPI0 and SPI1 mappings overlap here.
+            // Dxx maps to GPxx with an offset based on which SPI peripheral we're using.
+            tmpint2 = tmpint + ADS1256_D_CHAN_OFFSET;
 #elif defined(BASE_MODE)
             tmpint2 = tmpint + 2; // D0-D20 are GP2..GP22
 #elif defined(DIG_26_MODE)

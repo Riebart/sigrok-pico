@@ -103,28 +103,43 @@
 #elif PICO_MODE == 3 // ADS1256 SPI ADC mode
 
 #define ADS1256_MODE 1
-#define NUM_A_CHAN 8            // AIN0-AIN7 single-ended vs AINCOM
-#define NUM_D_CHAN 16           // GP0-GP15
+#define NUM_A_CHAN 8 // AIN0-AIN7 single-ended vs AINCOM
+
+// Support 8 digital channels in this mode
+// When using SPI0, GP00-GP03 are used for SPI and 04 for DRDY, so GP 5,6,7,8,9,10,11,12,13,14,15
+// When using SPI1, GP12-GP15 are used for SPI and 29 for DRDY, so GP 0,1,2,3,4,5,6,7,8,9,10,11
+//
+// 8 is just the nicest round number that is contiguous in both cases.
+#define NUM_D_CHAN 8
+
 #define GPIO_D_MASK 0x0000FFFF  // Mask of bits for digital inputs (GP0-GP15)
 #define MEM_D_MASK_L 0x0000FFFF // lower mask of bits for digital inputs
 #define MEM_D_MASK_U 0x00000000 // upper mask of bits for digital inputs
 #define UART_EN 0
 #define PIN_TEST_MASK 0x0000FFFF
-#define HAS_LED 1           // TODOADS1256 This is maybe not true, will depend on PICO/PICO-W/PICO2
+#define HAS_LED 1   // TODOADS1256 This is maybe not true, will depend on PICO/PICO-W/PICO2
 
 // ---------- SPI0/1 / ADS1256 pin assignments ----------
-#ifdef ADS1256_SPI1         // use SPI1
+#ifdef ADS1256_SPI1 // use SPI1
+
+#define ADS1256_SPI_PERIPHERAL 1
 #define ADS1256_PIN_MISO 12 // SPI0 RX  -> ADS1256 DOUT
 #define ADS1256_PIN_CS 13   // GPIO CS  -> ADS1256 /CS  (active-low, SW-controlled)
 #define ADS1256_PIN_SCLK 14 // SPI0 SCK -> ADS1256 SCLK
 #define ADS1256_PIN_MOSI 15 // SPI0 TX  -> ADS1256 DIN
 #define ADS1256_PIN_DRDY 29 // GPIO in  -> ADS1256 /DRDY (active-low)
-#else                       // #ifdef ADS1256_SPI0 use SPI0
-#define ADS1256_PIN_MISO 0  // SPI0 RX  -> ADS1256 DOUT
-#define ADS1256_PIN_CS 1    // GPIO CS  -> ADS1256 /CS  (active-low, SW-controlled)
-#define ADS1256_PIN_SCLK 2  // SPI0 SCK -> ADS1256 SCLK
-#define ADS1256_PIN_MOSI 3  // SPI0 TX  -> ADS1256 DIN
-#define ADS1256_PIN_DRDY 4  // GPIO in  -> ADS1256 /DRDY (active-low)
+#define ADS1256_D_CHAN_OFFSET 0
+
+#else // #ifdef ADS1256_SPI0 use SPI0
+
+#define ADS1256_SPI_PERIPHERAL 0
+#define ADS1256_PIN_MISO 0 // SPI0 RX  -> ADS1256 DOUT
+#define ADS1256_PIN_CS 1   // GPIO CS  -> ADS1256 /CS  (active-low, SW-controlled)
+#define ADS1256_PIN_SCLK 2 // SPI0 SCK -> ADS1256 SCLK
+#define ADS1256_PIN_MOSI 3 // SPI0 TX  -> ADS1256 DIN
+#define ADS1256_PIN_DRDY 4 // GPIO in  -> ADS1256 /DRDY (active-low)
+#define ADS1256_D_CHAN_OFFSET 5
+
 #endif
 
 // ---------- ADS1256 hardware configuration ----------
