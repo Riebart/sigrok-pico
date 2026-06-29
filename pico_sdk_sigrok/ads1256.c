@@ -23,9 +23,12 @@
  *   libsigrok src/hardware/raspberrypi-pico/protocol.c:
  *     process_slice() multi-byte analog decoding (a_size = 3)
  */
+
+// Guard is defined in the header includes.
+#include "ads1256.h"
+
 #ifdef ADS1256_MODE
 
-#include "ads1256.h"
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
@@ -35,13 +38,13 @@
 /* -----------------------------------------------------------------------
  * Shared state definitions (declared extern in ads1256.h)
  * ----------------------------------------------------------------------- */
-volatile uint8_t  ads1256_ring[ADS1256_RING_BYTES];
-volatile uint32_t ads1256_ring_wr       = 0;
-volatile uint32_t ads1256_ring_rd       = 0;
-volatile bool     ads1256_ring_overflow = false;
+volatile uint8_t ads1256_ring[ADS1256_RING_BYTES];
+volatile uint32_t ads1256_ring_wr = 0;
+volatile uint32_t ads1256_ring_rd = 0;
+volatile bool ads1256_ring_overflow = false;
 
-volatile bool    ads1256_core1_run = false;
-volatile bool    ads1256_multichan = false;
+volatile bool ads1256_core1_run = false;
+volatile bool ads1256_multichan = false;
 volatile uint8_t ads1256_single_ch = 0;
 
 /* External references from pico_sdk_sigrok.c used in multi-channel mode */
@@ -53,7 +56,7 @@ extern volatile uint32_t dma_halves;
  * CS is GPIO-controlled (not hardware NSS) for precise timing.
  * ----------------------------------------------------------------------- */
 
-static inline void cs_assert(void)   { gpio_put(ADS1256_PIN_CS, 0); }
+static inline void cs_assert(void) { gpio_put(ADS1256_PIN_CS, 0); }
 static inline void cs_deassert(void) { gpio_put(ADS1256_PIN_CS, 1); }
 
 /*
@@ -64,7 +67,8 @@ static inline void cs_deassert(void) { gpio_put(ADS1256_PIN_CS, 1); }
 static bool wait_drdy(uint32_t timeout_us)
 {
     absolute_time_t deadline = make_timeout_time_us(timeout_us);
-    while (gpio_get(ADS1256_PIN_DRDY) != 0) {
+    while (gpio_get(ADS1256_PIN_DRDY) != 0)
+    {
         if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0)
             return false;
     }
@@ -121,7 +125,7 @@ void ads1256_hw_init(void)
     cs_assert();
     spi_write_byte(ADS1256_CMD_RESET);
     cs_deassert();
-    sleep_ms(10);   /* conservatively >= t_STBY ~0.6 ms */
+    sleep_ms(10); /* conservatively >= t_STBY ~0.6 ms */
 
     /*
      * 4. Write STATUS, MUX, ADCON, DRATE in a single WREG burst.
@@ -140,15 +144,15 @@ void ads1256_hw_init(void)
      */
     uint8_t status_val = ADS1256_STATUS_ACAL |
                          (ADS1256_BUF_ENABLE ? ADS1256_STATUS_BUFEN : 0);
-    uint8_t adcon_val  = ads1256_pga_bits(ADS1256_PGA_GAIN);
-    uint8_t mux_val    = ads1256_mux_single(0);   /* AIN0 vs AINCOM */
+    uint8_t adcon_val = ads1256_pga_bits(ADS1256_PGA_GAIN);
+    uint8_t mux_val = ads1256_mux_single(0); /* AIN0 vs AINCOM */
 
     cs_assert();
     spi_write_byte(ADS1256_CMD_WREG | ADS1256_REG_STATUS);
-    spi_write_byte(3);              /* write 4 registers: count - 1 = 3 */
-    spi_write_byte(status_val);     /* STATUS */
-    spi_write_byte(mux_val);        /* MUX    */
-    spi_write_byte(adcon_val);      /* ADCON  */
+    spi_write_byte(3);                 /* write 4 registers: count - 1 = 3 */
+    spi_write_byte(status_val);        /* STATUS */
+    spi_write_byte(mux_val);           /* MUX    */
+    spi_write_byte(adcon_val);         /* ADCON  */
     spi_write_byte(ADS1256_DRATE_REG); /* DRATE */
     cs_deassert();
 
@@ -194,10 +198,11 @@ void ads1256_hw_init(void)
  * ----------------------------------------------------------------------- */
 void ads1256_encode_sample(int32_t raw24, uint8_t out[ADS1256_A_BYTES])
 {
-    if (raw24 < 0) raw24 = 0;
+    if (raw24 < 0)
+        raw24 = 0;
     uint32_t v = (uint32_t)raw24 >> ADS1256_A_RSHIFT;
-    out[0] = 0x80 | ( v        & 0x7F);
-    out[1] = 0x80 | ((v >>  7) & 0x7F);
+    out[0] = 0x80 | (v & 0x7F);
+    out[1] = 0x80 | ((v >> 7) & 0x7F);
     out[2] = 0x80 | ((v >> 14) & 0x7F);
 }
 
@@ -213,9 +218,10 @@ static int32_t ads1256_read24_rdata(void)
     busy_wait_us_32(ADS1256_T6_US);
     spi_read_bytes(buf, 3);
     int32_t raw = ((int32_t)buf[0] << 16) |
-                  ((int32_t)buf[1] <<  8) |
-                   (int32_t)buf[2];
-    if (raw & 0x800000) raw |= (int32_t)0xFF000000;
+                  ((int32_t)buf[1] << 8) |
+                  (int32_t)buf[2];
+    if (raw & 0x800000)
+        raw |= (int32_t)0xFF000000;
     return raw;
 }
 
@@ -227,9 +233,10 @@ static int32_t ads1256_read24_rdatac(void)
     uint8_t buf[3];
     spi_read_bytes(buf, 3);
     int32_t raw = ((int32_t)buf[0] << 16) |
-                  ((int32_t)buf[1] <<  8) |
-                   (int32_t)buf[2];
-    if (raw & 0x800000) raw |= (int32_t)0xFF000000;
+                  ((int32_t)buf[1] << 8) |
+                  (int32_t)buf[2];
+    if (raw & 0x800000)
+        raw |= (int32_t)0xFF000000;
     return raw;
 }
 
@@ -254,7 +261,7 @@ static void run_single_channel(void)
     /* Program MUX, SYNC, WAKEUP (datasheet section 8.5.3 Figure 30) */
     cs_assert();
     spi_write_byte(ADS1256_CMD_WREG | ADS1256_REG_MUX);
-    spi_write_byte(0);   /* count - 1 = 0 (one register) */
+    spi_write_byte(0); /* count - 1 = 0 (one register) */
     spi_write_byte(ads1256_mux_single(ads1256_single_ch));
     cs_deassert();
 
@@ -275,9 +282,11 @@ static void run_single_channel(void)
     cs_assert();
     spi_write_byte(ADS1256_CMD_RDATAC);
 
-    while (ads1256_core1_run) {
+    while (ads1256_core1_run)
+    {
         /* Wait for DRDY (next conversion complete) */
-        while (gpio_get(ADS1256_PIN_DRDY) != 0) {
+        while (gpio_get(ADS1256_PIN_DRDY) != 0)
+        {
             if (!ads1256_core1_run)
                 goto done_rdatac;
         }
@@ -287,10 +296,12 @@ static void run_single_channel(void)
 
         /* Compute next write position */
         uint32_t next_wr = ads1256_ring_wr + ADS1256_A_BYTES;
-        if (next_wr >= ADS1256_RING_BYTES) next_wr = 0;
+        if (next_wr >= ADS1256_RING_BYTES)
+            next_wr = 0;
 
         /* Overflow check: would we lap the read pointer? */
-        if (next_wr == ads1256_ring_rd) {
+        if (next_wr == ads1256_ring_rd)
+        {
             ads1256_ring_overflow = true;
             goto done_rdatac;
         }
@@ -299,7 +310,7 @@ static void run_single_channel(void)
         uint8_t enc[ADS1256_A_BYTES];
         ads1256_encode_sample(raw, enc);
         uint32_t wr = ads1256_ring_wr;
-        ads1256_ring[wr    ] = enc[0];
+        ads1256_ring[wr] = enc[0];
         ads1256_ring[wr + 1] = enc[1];
         ads1256_ring[wr + 2] = enc[2];
 
@@ -336,23 +347,24 @@ static void run_multi_channel(void)
     /* Build list of enabled channels from dev.a_mask */
     uint8_t chans[NUM_A_CHAN];
     uint8_t nchan = 0;
-    for (int i = 0; i < NUM_A_CHAN; i++) {
+    for (int i = 0; i < NUM_A_CHAN; i++)
+    {
         if ((dev.a_mask >> i) & 1)
             chans[nchan++] = (uint8_t)i;
     }
-    if (nchan == 0) return;
+    if (nchan == 0)
+        return;
 
-    uint8_t  *buf_ptrs[2] = {
+    uint8_t *buf_ptrs[2] = {
         (uint8_t *)(uintptr_t)dev.abuf0_start,
-        (uint8_t *)(uintptr_t)dev.abuf1_start
-    };
-    uint32_t half_bytes = dev.a_size;   /* set by pico_sdk_sigrok.c */
-    uint32_t half_idx   = 0;
-    uint32_t byte_off   = 0;
+        (uint8_t *)(uintptr_t)dev.abuf1_start};
+    uint32_t half_bytes = dev.a_size; /* set by pico_sdk_sigrok.c */
+    uint32_t half_idx = 0;
+    uint32_t byte_off = 0;
 
-    uint32_t total_enc  = dev.num_samples *
-                          (uint32_t)nchan * ADS1256_A_BYTES;
-    uint32_t enc_done   = 0;
+    uint32_t total_enc = dev.num_samples *
+                         (uint32_t)nchan * ADS1256_A_BYTES;
+    uint32_t enc_done = 0;
 
     /*
      * Prime: program MUX for chans[0], issue SYNC+WAKEUP, wait DRDY.
@@ -373,11 +385,13 @@ static void run_multi_channel(void)
     spi_write_byte(ADS1256_CMD_WAKEUP);
     cs_deassert();
 
-    if (!wait_drdy(200000)) return;
+    if (!wait_drdy(200000))
+        return;
 
-    uint8_t cur = 0;   /* index into chans[] for the result being read */
+    uint8_t cur = 0; /* index into chans[] for the result being read */
 
-    while (ads1256_core1_run) {
+    while (ads1256_core1_run)
+    {
         uint8_t next = (uint8_t)((cur + 1) % nchan);
 
         /*
@@ -401,7 +415,8 @@ static void run_multi_channel(void)
         cs_deassert();
 
         /* Wait for DRDY: channel[cur] conversion complete */
-        if (!wait_drdy(500000)) break;
+        if (!wait_drdy(500000))
+            break;
 
         /* Read channel[cur] result via RDATA */
         cs_assert();
@@ -420,10 +435,11 @@ static void run_multi_channel(void)
         enc_done += ADS1256_A_BYTES;
 
         /* Half-buffer full: signal core0 and switch halves */
-        if (byte_off >= half_bytes) {
+        if (byte_off >= half_bytes)
+        {
             dma_halves++;
             half_idx ^= 1;
-            byte_off  = 0;
+            byte_off = 0;
         }
 
         /* Fixed-length run: exit when all expected encoded bytes written */
@@ -449,14 +465,15 @@ void ads1256_core1_entry(void)
 {
     ads1256_hw_init();
 
-    for (;;) {
+    for (;;)
+    {
         /* Idle until core0 signals start of acquisition */
         while (!ads1256_core1_run)
             tight_loop_contents();
 
         /* Reset ring buffer for each new run */
-        ads1256_ring_wr       = 0;
-        ads1256_ring_rd       = 0;
+        ads1256_ring_wr = 0;
+        ads1256_ring_rd = 0;
         ads1256_ring_overflow = false;
 
         if (ads1256_multichan)

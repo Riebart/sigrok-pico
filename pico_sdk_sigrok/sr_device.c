@@ -6,6 +6,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "pico/time.h"    // sleep_ms
+#include "pico/bootrom.h" // rom_reset_usb_boot
+
 int Dprintf(const char *fmt, ...)
 {
 
