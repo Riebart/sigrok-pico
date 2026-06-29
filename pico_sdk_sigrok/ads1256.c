@@ -207,8 +207,8 @@ void ads1256_encode_sample(int32_t raw24, uint8_t out[ADS1256_A_BYTES])
     /* FIX: MSB first -- out[0] must hold the most-significant 7 bits so that
      * libsigrok's process_slice() reassembly ((b[0]-0x80)<<14 | ...) is correct. */
     out[0] = 0x80 | ((v >> 14) & 0x7F); /* bits 20..14 */
-    out[1] = 0x80 | ((v >>  7) & 0x7F); /* bits 13..7  */
-    out[2] = 0x80 | ( v        & 0x7F); /* bits  6..0  */
+    out[1] = 0x80 | ((v >> 7) & 0x7F);  /* bits 13..7  */
+    out[2] = 0x80 | (v & 0x7F);         /* bits  6..0  */
 }
 
 /* -----------------------------------------------------------------------
@@ -478,7 +478,9 @@ void ads1256_core1_entry(void)
 {
     ads1256_hw_init();
 
-    for (;;)
+    ads1256_ring_overflow = true;
+
+    while (ads1256_ring_overflow)
     {
         /* Reset ring buffer state before each acquisition, including
          * clearing any overflow flag from the previous run. */
@@ -498,6 +500,8 @@ void ads1256_core1_entry(void)
         /* ads1256_core1_run will be cleared by core0 when acquisition ends,
          * or may still be true after a ring overflow (core0 will drain and
          * restart).  Either way, loop back to the idle wait. */
+
+        // IF we exit a collection routine with an overflow, just try again, otherwise exit
     }
 }
 

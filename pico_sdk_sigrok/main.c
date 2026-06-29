@@ -399,6 +399,8 @@ int main()
 #endif // PIN_TEST_MODE
        // Dprintf("starting data buf values 0x%X 0x%X\n\r",capture_buf[dev.dbuf0_start],capture_buf[dev.dbuf1_start]);
       uint32_t adcdivint = 48000000ULL / (dev.sample_rate * dev.a_chan_cnt);
+
+#ifndef ADS1256_MODE // SKip onbord ADC work if ADS1256 is enabled.
       if (dev.a_chan_cnt)
       {
         adc_run(false);
@@ -456,6 +458,8 @@ int main()
           adc_fifo_drain();
         } // adcdivint legal
       } // any analog enabled
+#endif
+
       if (dev.d_mask)
       {
         // analyzer_init from pico-examples
