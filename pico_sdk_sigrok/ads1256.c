@@ -303,6 +303,8 @@ static void run_single_channel(void)
         if (next_wr == ads1256_ring_rd)
         {
             ads1256_ring_overflow = true;
+            // The wrapper of this call will restart on overflow conditions, so we can quit "safely".
+            // ALthough this goto is gnarly, and gonna make for leaks.
             goto done_rdatac;
         }
 
@@ -465,7 +467,8 @@ void ads1256_core1_entry(void)
 {
     ads1256_hw_init();
 
-    for (;;)
+    // for (;;)
+    while (!ads1256_ring_overflow)
     {
         /* Idle until core0 signals start of acquisition */
         while (!ads1256_core1_run)
@@ -481,9 +484,11 @@ void ads1256_core1_entry(void)
         else
             run_single_channel();
 
-        /* Signal core0 that sampling has finished */
-        ads1256_core1_run = false;
+        If we get here because we overflowed the ring, just restart.
     }
+
+    /* Signal core0 that sampling has finished */
+    ads1256_core1_run = false;
 }
 
 #endif /* ADS1256_MODE */
