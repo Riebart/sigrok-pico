@@ -83,6 +83,15 @@
   #define UART_EN 0
   #define PIN_TEST_MASK 0xFFFFFFFF
 #endif
+
+// On Pico W the LED is on the CYW43 chip, not a GPIO, so PICO_DEFAULT_LED_PIN
+// is not defined by the board headers. Clear HAS_LED when the board does not
+// expose the LED as a directly addressable GPIO pin so that gpio_init() calls
+// guarded by #ifdef HAS_LED do not produce an undeclared-identifier error.
+#if defined(HAS_LED) && !defined(PICO_DEFAULT_LED_PIN)
+  #undef HAS_LED
+#endif
+
 //These two enable debug print outs of D4 generation, D4_DBG2 is higher verbosity
 //#define D4_DBG 1
 //#define D4_DBG2 2
