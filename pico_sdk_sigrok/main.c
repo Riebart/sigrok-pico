@@ -55,6 +55,7 @@ int main()
   // Early CDC IO code had lots of sleep statements, but the TUD code seems to have sufficient
   // checks that this isn't needed, but it doesn't hurt...
   sleep_us(100000);
+// GPIOs 26 through 28 (the ADC ports) ar
 // GPIOs 26 through 28 (the ADC ports) are on the PICO, GPIO29 is not a pin on the PICO
 // Note that digital only modes don't block all configuration related to ADC, but does enough
 // to ensure we can properly sample the pins digitally.
@@ -263,21 +264,26 @@ int main()
       Dprintf("STRTING\n\r");
 
 #ifdef ADS1256_MODE
-      // Configure ADS1256 Core 1 sampling
-      ads1256_multichan = (dev.a_chan_cnt > 1);
-      if (!ads1256_multichan)
+      // Issue #6: only start Core 1 ADS1256 sampling if analog channels
+      // are actually requested. A pure digital capture must not touch the
+      // ADS1256 or the SPI bus.
+      if (dev.a_chan_cnt > 0)
       {
-        // Find which single channel is enabled
-        for (int i = 0; i < NUM_A_CHAN; i++)
+        ads1256_multichan = (dev.a_chan_cnt > 1);
+        if (!ads1256_multichan)
         {
-          if ((dev.a_mask >> i) & 1)
+          // Find which single channel is enabled
+          for (int i = 0; i < NUM_A_CHAN; i++)
           {
-            ads1256_single_ch = i;
-            break;
+            if ((dev.a_mask >> i) & 1)
+            {
+              ads1256_single_ch = i;
+              break;
+            }
           }
         }
+        ads1256_core1_run = true;
       }
-      ads1256_core1_run = true;
       dev.state = SENDING;
 #endif
 
