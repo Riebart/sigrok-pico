@@ -278,10 +278,9 @@ int main()
         }
       }
       ads1256_core1_run = true;
+      dev.state = SENDING
 #endif
 
-      // Sample rate must always be even.  Pulseview code enforces this
-      // because it specifies a fixed set of frequencies, but sigrok cli can still odd ones.
       // Sample rate must always be even.  Pulseview code enforces this
       // because it specifies a fixed set of frequencies, but sigrok cli can still odd ones.
       dev.sample_rate >>= 1;
