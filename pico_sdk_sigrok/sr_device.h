@@ -27,7 +27,14 @@
 // Note: In the wireless versions, GPIO23-25 control the wifi chip, 23 and 24
 //aren't available in the PICO, and 25 controls the LED. So while the LED is lost,
 //there is no change in available channels for sampling.
+//
+// PICO_MODE is normally set via CMake: -DPICO_MODE=N
+// target_compile_definitions() in CMakeLists.txt passes it to the compiler.
+// The #ifndef guard here ensures that compiler-supplied value takes precedence.
+// If not supplied (e.g. local build without -DPICO_MODE), defaults to 2.
+#ifndef PICO_MODE
 #define PICO_MODE 2 //0 is baseline, 1 is digital 26, 2 is digital 32
+#endif
 //WARNING: USE PIN_TEST_MODE with extreme caution!!!!
 //If set, treat the inputs (A&D) to be outputs so that the device can drive values for
 //turn-on testing.  Enabling this allows all modes to be tested without having to drive
