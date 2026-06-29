@@ -357,9 +357,13 @@ static void run_multi_channel(void)
     if (nchan == 0)
         return;
 
+    // uint8_t *buf_ptrs[2] = {
+    //     (uint8_t *)(uintptr_t)dev.abuf0_start,
+    //     (uint8_t *)(uintptr_t)dev.abuf1_start};
+    extern uint8_t *capture_buf;
     uint8_t *buf_ptrs[2] = {
-        (uint8_t *)(uintptr_t)dev.abuf0_start,
-        (uint8_t *)(uintptr_t)dev.abuf1_start};
+        capture_buf + dev.abuf0_start,
+        capture_buf + dev.abuf1_start};
     uint32_t half_bytes = dev.a_size; /* set by pico_sdk_sigrok.c */
     uint32_t half_idx = 0;
     uint32_t byte_off = 0;
