@@ -9,7 +9,7 @@
 int Dprintf(const char *fmt, ...)
 {
 
-  #if(UART_EN == 1)
+#if (UART_EN == 1)
    va_list argptr;
    int len = 1;
    char _dstr[256];
@@ -30,15 +30,15 @@ int Dprintf(const char *fmt, ...)
       uart_tx_wait_blocking(uart0);
    }
    return len;
-  #else
+#else
    return 0;
-   #endif
+#endif
 }
 
 // reset as part of init, or on a completed send
 void reset(sr_device_t *d)
 {
-   d->state==IDLE;
+   d->state == IDLE;
    d->cont = 0;
    d->scnt = 0;
 };
@@ -85,7 +85,7 @@ void tx_init(sr_device_t *d)
       }
    }
    d->d_tx_bps = (d->d_chan_cnt + 6) / 7;
-   d->state=STARTED;
+   d->state = STARTED;
 }
 
 // Process incoming character stream
@@ -110,14 +110,17 @@ int process_char(sr_device_t *d, char charin)
       switch (d->cmdstr[0])
       {
       case 'b':
-         if(!strcmp(d->cmdstr,"bootsel")){
+         if (!strcmp(d->cmdstr, "bootsel"))
+         {
             Dprintf("Entering Bootsel mode\n\r");
             sleep_ms(1000);
-            rom_reset_usb_boot(0,0);
-         }else{
+            rom_reset_usb_boot(0, 0);
+         }
+         else
+         {
             Dprintf("Invald bootsel command - enter \"bootsel\"\n\r");
          }
-         ret=0;
+         ret = 0;
          break;
 
       case 'i':
@@ -261,35 +264,40 @@ int process_char(sr_device_t *d, char charin)
       // Get signal name
       // format: n(A/D)xx
       case 'n':
-          tmpint = atoi(&(d->cmdstr[2]));
-          if (d->cmdstr[1] == 'D') {
+         tmpint = atoi(&(d->cmdstr[2]));
+         if (d->cmdstr[1] == 'D')
+         {
 #ifdef ADS1256_MODE
-             // D0-D15 map directly to GP0-GP15
-             tmpint2 = tmpint;
+            // D0-D15 map directly to GP0-GP15
+            tmpint2 = tmpint; // TODOADS1256 No they don't, the SPI0 and SPI1 mappings overlap here.
 #elif defined(BASE_MODE)
-             tmpint2 = tmpint + 2; // D0-D20 are GP2..GP22
+            tmpint2 = tmpint + 2; // D0-D20 are GP2..GP22
 #elif defined(DIG_26_MODE)
-             tmpint2 = (tmpint <= 22) ? tmpint : tmpint + 3;
-#else  // DIG_32_MODE
-             tmpint2 = tmpint;
+            tmpint2 = (tmpint <= 22) ? tmpint : tmpint + 3;
+#else // DIG_32_MODE
+            tmpint2 = tmpint;
 #endif
-             Dprintf("NameD %c %d %d\n\r", d->cmdstr[1], tmpint, tmpint2);
-             sprintf(d->rspstr, "GP%d", tmpint2);
-             ret = 1;
-          } else if (d->cmdstr[1] == 'A') {
+            Dprintf("NameD %c %d %d\n\r", d->cmdstr[1], tmpint, tmpint2);
+            sprintf(d->rspstr, "GP%d", tmpint2);
+            ret = 1;
+         }
+         else if (d->cmdstr[1] == 'A')
+         {
 #ifdef ADS1256_MODE
-             // AIN0-AIN7 single-ended vs AINCOM
-             sprintf(d->rspstr, "AIN%d", tmpint);
+            // AIN0-AIN7 single-ended vs AINCOM
+            sprintf(d->rspstr, "AIN%d", tmpint);
 #else
-             tmpint2 = tmpint + 26;
-             sprintf(d->rspstr, "ADC%d_GP%d", tmpint, tmpint2);
+            tmpint2 = tmpint + 26;
+            sprintf(d->rspstr, "ADC%d_GP%d", tmpint, tmpint2);
 #endif
-             Dprintf("NameA %c %d\n\r", d->cmdstr[1], tmpint);
-             ret = 1;
-          } else {
-             ret = 0;
-          }
-          break;
+            Dprintf("NameA %c %d\n\r", d->cmdstr[1], tmpint);
+            ret = 1;
+         }
+         else
+         {
+            ret = 0;
+         }
+         break;
 
       default:
          Dprintf("bad command %s\n\r", d->cmdstr);

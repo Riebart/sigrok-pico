@@ -18,7 +18,7 @@
 #include "tusb.h" //.tud_cdc_write...
 
 #include "sr_device.h"
-#ifdef ADS1256_MODE
+#ifdef ADS1256_MODE // Defined in sr_device.h right above us, if applicable.
 #include "ads1256.h"
 #endif
 

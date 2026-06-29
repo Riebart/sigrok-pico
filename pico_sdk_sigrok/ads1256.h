@@ -10,52 +10,55 @@
  * Only compiled when ADS1256_MODE is defined (i.e. PICO_MODE == 3 in
  * sr_device.h).  Other modes do not link ads1256.c at all.
  */
+
+// Include outside the guard as this header defines the guard condition.
+#include "sr_device.h" /* ADS1256_* compile-time constants */
+
 #ifdef ADS1256_MODE
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "sr_device.h"   /* ADS1256_* compile-time constants */
 #include "hardware/spi.h"
 
 /* -----------------------------------------------------------------------
  * ADS1256 register addresses (Table 23, ADS1256 datasheet SBAS288)
  * ----------------------------------------------------------------------- */
-#define ADS1256_REG_STATUS  0x00
-#define ADS1256_REG_MUX     0x01
-#define ADS1256_REG_ADCON   0x02
-#define ADS1256_REG_DRATE   0x03
-#define ADS1256_REG_IO      0x04
-#define ADS1256_REG_OFC0    0x05
-#define ADS1256_REG_OFC1    0x06
-#define ADS1256_REG_OFC2    0x07
-#define ADS1256_REG_FSC0    0x08
-#define ADS1256_REG_FSC1    0x09
-#define ADS1256_REG_FSC2    0x0A
+#define ADS1256_REG_STATUS 0x00
+#define ADS1256_REG_MUX 0x01
+#define ADS1256_REG_ADCON 0x02
+#define ADS1256_REG_DRATE 0x03
+#define ADS1256_REG_IO 0x04
+#define ADS1256_REG_OFC0 0x05
+#define ADS1256_REG_OFC1 0x06
+#define ADS1256_REG_OFC2 0x07
+#define ADS1256_REG_FSC0 0x08
+#define ADS1256_REG_FSC1 0x09
+#define ADS1256_REG_FSC2 0x0A
 
 /* -----------------------------------------------------------------------
  * ADS1256 SPI command bytes (Table 24, ADS1256 datasheet SBAS288)
  * ----------------------------------------------------------------------- */
-#define ADS1256_CMD_WAKEUP   0x00
-#define ADS1256_CMD_RDATA    0x01
-#define ADS1256_CMD_RDATAC   0x03
-#define ADS1256_CMD_SDATAC   0x0F
-#define ADS1256_CMD_RREG     0x10
-#define ADS1256_CMD_WREG     0x50
-#define ADS1256_CMD_SELFCAL  0xF0
+#define ADS1256_CMD_WAKEUP 0x00
+#define ADS1256_CMD_RDATA 0x01
+#define ADS1256_CMD_RDATAC 0x03
+#define ADS1256_CMD_SDATAC 0x0F
+#define ADS1256_CMD_RREG 0x10
+#define ADS1256_CMD_WREG 0x50
+#define ADS1256_CMD_SELFCAL 0xF0
 #define ADS1256_CMD_SELFOCAL 0xF1
 #define ADS1256_CMD_SELFGCAL 0xF2
-#define ADS1256_CMD_SYSOCAL  0xF3
-#define ADS1256_CMD_SYSGCAL  0xF4
-#define ADS1256_CMD_SYNC     0xFC
-#define ADS1256_CMD_STANDBY  0xFD
-#define ADS1256_CMD_RESET    0xFE
+#define ADS1256_CMD_SYSOCAL 0xF3
+#define ADS1256_CMD_SYSGCAL 0xF4
+#define ADS1256_CMD_SYNC 0xFC
+#define ADS1256_CMD_STANDBY 0xFD
+#define ADS1256_CMD_RESET 0xFE
 
 /* -----------------------------------------------------------------------
  * STATUS register bit fields (Table 25, ADS1256 datasheet)
  * ----------------------------------------------------------------------- */
-#define ADS1256_STATUS_BUFEN  (1 << 1)   /* input buffer enable              */
-#define ADS1256_STATUS_ACAL   (1 << 2)   /* auto-calibration enable          */
-#define ADS1256_STATUS_ORDER  (1 << 3)   /* bit order: 0=MSB first (default) */
+#define ADS1256_STATUS_BUFEN (1 << 1) /* input buffer enable              */
+#define ADS1256_STATUS_ACAL (1 << 2)  /* auto-calibration enable          */
+#define ADS1256_STATUS_ORDER (1 << 3) /* bit order: 0=MSB first (default) */
 
 /* -----------------------------------------------------------------------
  * ADCON register: PGA gain field encoding (bits [2:0], Table 27)
@@ -66,15 +69,24 @@
  * ----------------------------------------------------------------------- */
 static inline uint8_t ads1256_pga_bits(int gain)
 {
-    switch (gain) {
-        case 1:  return 0;
-        case 2:  return 1;
-        case 4:  return 2;
-        case 8:  return 3;
-        case 16: return 4;
-        case 32: return 5;
-        case 64: return 6;
-        default: return 0;   /* fall back to PGA=1 for any invalid value */
+    switch (gain)
+    {
+    case 1:
+        return 0;
+    case 2:
+        return 1;
+    case 4:
+        return 2;
+    case 8:
+        return 3;
+    case 16:
+        return 4;
+    case 32:
+        return 5;
+    case 64:
+        return 6;
+    default:
+        return 0; /* fall back to PGA=1 for any invalid value */
     }
 }
 
@@ -98,7 +110,7 @@ static inline uint8_t ads1256_mux_single(uint8_t ch)
  * t11 (SYNC/WAKEUP settling time)         = 24 / CLKIN  (~3.13 us @ 7.68 MHz)
  * +1 us margin; use busy_wait_us_32() on core1 to avoid SDK scheduler.
  * ----------------------------------------------------------------------- */
-#define ADS1256_T6_US  ((50000000UL / ADS1256_CLKIN_HZ) + 1)
+#define ADS1256_T6_US ((50000000UL / ADS1256_CLKIN_HZ) + 1)
 #define ADS1256_T11_US ((24000000UL / ADS1256_CLKIN_HZ) + 1)
 
 /* -----------------------------------------------------------------------
@@ -108,17 +120,17 @@ static inline uint8_t ads1256_mux_single(uint8_t ch)
  * Both indices are byte offsets that wrap at ADS1256_RING_BYTES.
  * Declared volatile so both cores see updates without cache aliasing.
  * ----------------------------------------------------------------------- */
-extern volatile uint8_t  ads1256_ring[ADS1256_RING_BYTES];
+extern volatile uint8_t ads1256_ring[ADS1256_RING_BYTES];
 extern volatile uint32_t ads1256_ring_wr;   /* next write offset, owned by core1 */
 extern volatile uint32_t ads1256_ring_rd;   /* next read  offset, owned by core0 */
-extern volatile bool     ads1256_ring_overflow; /* set by core1 on overflow */
+extern volatile bool ads1256_ring_overflow; /* set by core1 on overflow */
 
 /* -----------------------------------------------------------------------
  * Shared control flags (written by core0, read by core1)
  * ----------------------------------------------------------------------- */
-extern volatile bool    ads1256_core1_run;  /* core0 sets true to start sampling  */
-extern volatile bool    ads1256_multichan;  /* true = multi-ch; false = RDATAC    */
-extern volatile uint8_t ads1256_single_ch;  /* channel index for single-ch mode   */
+extern volatile bool ads1256_core1_run;    /* core0 sets true to start sampling  */
+extern volatile bool ads1256_multichan;    /* true = multi-ch; false = RDATAC    */
+extern volatile uint8_t ads1256_single_ch; /* channel index for single-ch mode   */
 
 /* -----------------------------------------------------------------------
  * Public API

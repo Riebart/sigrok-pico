@@ -61,6 +61,7 @@
 #undef ADS1256_MODE
 #undef HAS_LED
 #if PICO_MODE == 0 // Baseline
+
 #define BASE_MODE 1
 #define NUM_A_CHAN 3  // number of analog channels
 #define NUM_D_CHAN 21 // number of digital channels
@@ -75,6 +76,7 @@
 #define PIN_TEST_MASK 0x1C7FFFFE
 #define HAS_LED 1
 #elif PICO_MODE == 1 // Digital 26
+
 #define DIG_26_MODE 1
 #define NUM_A_CHAN 0            // number of analog channels
 #define NUM_D_CHAN 26           // number of digital channels
@@ -87,6 +89,7 @@
 // Note: The RP2040 only has GPIOs 0-29.
 // The RP2350 has GPIOs 30 and above, but only in the QFN-80 packeage.
 #elif PICO_MODE == 2 // Digital 32
+
 // #define BASE_MODE 0
 // #define DIG_26_MODE 0
 #define DIG_32_MODE 1
@@ -98,6 +101,7 @@
 #define UART_EN 0
 #define PIN_TEST_MASK 0xFFFFFFFF
 #elif PICO_MODE == 3 // ADS1256 SPI ADC mode
+
 #define ADS1256_MODE 1
 #define NUM_A_CHAN 8            // AIN0-AIN7 single-ended vs AINCOM
 #define NUM_D_CHAN 16           // GP0-GP15
@@ -106,7 +110,7 @@
 #define MEM_D_MASK_U 0x00000000 // upper mask of bits for digital inputs
 #define UART_EN 0
 #define PIN_TEST_MASK 0x0000FFFF
-#define HAS_LED 1
+#define HAS_LED 1           // TODOADS1256 This is maybe not true, will depend on PICO/PICO-W/PICO2
 
 // ---------- SPI0/1 / ADS1256 pin assignments ----------
 #ifdef ADS1256_SPI1         // use SPI1
