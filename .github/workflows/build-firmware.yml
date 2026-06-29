@@ -73,6 +73,7 @@ defaults:
 
 env:
   PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.0' }}
+  BUILD_TYPE: Release
 
 jobs:
   build:
@@ -184,6 +185,7 @@ jobs:
                 -G "Unix Makefiles" \
                 -DPICO_BOARD=${{ matrix.pico_board }} \
                 -DPICO_MODE=${{ matrix.pico_mode }} \
+                -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
                 -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
                 -DCMAKE_MODULE_PATH="${GITHUB_WORKSPACE}"
 
