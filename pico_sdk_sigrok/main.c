@@ -278,7 +278,7 @@ int main()
         }
       }
       ads1256_core1_run = true;
-      dev.state = SENDING
+      dev.state = SENDING;
 #endif
 
       // Sample rate must always be even.  Pulseview code enforces this
