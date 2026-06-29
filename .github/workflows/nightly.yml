@@ -143,7 +143,7 @@ jobs:
           fi
 
   build:
-    name: Build nightly (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }}), ${{ matrix.build_type }})
+    name: Build nightly (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }}, ${{ matrix.build_type }})
     needs: check-changes
     if: needs.check-changes.outputs.should_build == 'true'
     runs-on: ubuntu-24.04

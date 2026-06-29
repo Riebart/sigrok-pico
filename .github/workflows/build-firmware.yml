@@ -86,7 +86,7 @@ env:
 
 jobs:
   build:
-    name: Build (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }}), ${{ matrix.build_type }})
+    name: Build (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }}, ${{ matrix.build_type }})
     runs-on: ubuntu-24.04
     permissions:
       contents: read
