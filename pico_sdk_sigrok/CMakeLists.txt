@@ -22,10 +22,6 @@ project(pico_sdk_sigrok C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(pico_sdk_sigrok PRIVATE ADS1256_ENABLE_STDIO_UART=1)
-endif()
-
 # ADS1256 compile-time overrides (PICO_MODE 3 only).
 # Pass on the cmake command line, e.g.:
 #   cmake -DADS1256_PGA_GAIN=2 -DADS1256_BUF_ENABLE=1 ..
@@ -55,6 +51,12 @@ add_executable(pico_sdk_sigrok
   ads1256.c
 )
 
+# If we're in a debug mode, then set the enable stdio UART, which will reduce digital channels
+# and enable stdio-uart on Uart0 on GP12/13
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(pico_sdk_sigrok PRIVATE ADS1256_ENABLE_STDIO_UART=1)
+endif()
+
 # ---------------------------------------------------------------------------
 # PICO_MODE — selects the channel/sample-rate configuration:
 #   0  baseline: 21 digital + 3 analog  (default)
@@ -70,12 +72,13 @@ add_executable(pico_sdk_sigrok
 if(NOT DEFINED PICO_MODE)
     set(PICO_MODE 0 CACHE STRING "Sigrok-pico channel mode (0=baseline, 1=dig26, 2=dig32, 3=external-adc)")
 endif()
+
 message(STATUS "Building with PICO_MODE=${PICO_MODE}")
 target_compile_definitions(pico_sdk_sigrok PUBLIC PICO_MODE=${PICO_MODE})
 
-if(DEFINED ADS1256_ENABLE_STDIO_UART AND ADS1256_ENABLE_STDIO_UART)
-    message(STATUS "ADS1256_ENABLE_STDIO_UART: stdio routed to UART1 on GP8/GP9")
-    add_compile_definitions(ADS1256_ENABLE_STDIO_UART=1)
+if((CMAKE_BUILD_TYPE STREQUAL "Debug") OR (DEFINED ADS1256_ENABLE_STDIO_UART AND ADS1256_ENABLE_STDIO_UART))
+    message(STATUS "ADS1256_ENABLE_STDIO_UART: stdio routed to UART0 on GP12/GP13")
+    target_compile_definitions(pico_sdk_sigrok PRIVATE ADS1256_ENABLE_STDIO_UART=1)
 
     pico_enable_stdio_usb(pico_sdk_sigrok 0)
     pico_enable_stdio_uart(pico_sdk_sigrok 1)
