@@ -488,7 +488,7 @@ void ads1256_core1_entry(void)
         else
             run_single_channel();
 
-        If we get here because we overflowed the ring, just restart.
+        // If we get here because we overflowed the ring, just restart from scratch.
     }
 
     /* Signal core0 that sampling has finished */
