@@ -653,8 +653,16 @@ int main()
         pio_sm_set_enabled(pio, piosm, true);
       } // if ~adcaborting
     } // if dev.sending and not started
-    // Send sample data
-    send_half();
+    // Send sample data.
+    // In ADS1256 single-channel (analog-only) mode, the ring buffer drain loop above
+    // handles all transmission directly, so skip send_half() to avoid the wasteful
+    // and incorrect path through send_slices_analog() against the DMA-backed buffer.
+#ifdef ADS1256_MODE
+    if (dev.d_mask > 0)
+#endif
+    {
+      send_half();
+    }
 // Drain all uart rxs (only tx is used for debug) if uart rx is not drained
 // it can cause code in the sdk to lock up serial CDC. These are rare noise/reset events
 // and thus not checked when dev.started to ensure the maintenance loop runs as fast
