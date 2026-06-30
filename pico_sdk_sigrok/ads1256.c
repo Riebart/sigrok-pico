@@ -273,8 +273,13 @@ static int32_t ads1256_read24_rdatac(void)
  *   1. Write MUX for ads1256_single_ch
  *   2. SYNC + WAKEUP to settle (t11 between each)
  *   3. Wait DRDY, enter RDATAC
- *   4. Loop: wait DRDY, read 24 bits, encode, write to ring buffer
- *   5. On exit: deassert CS, send SDATAC
+ *   4. Wait DRDY once more and discard: flushes the pipeline-startup
+ *      sample that was latched at/before RDATAC entry (datasheet
+ *      Section 8.5.4).  Without this discard, the acquisition loop
+ *      reads stale transition-era data as its first sample, producing
+ *      the random spike visible in the first one or two PulseView samples.
+ *   5. Loop: wait DRDY, read 24 bits, encode, write to ring buffer
+ *   6. On exit: deassert CS, send SDATAC
  *
  * Ring buffer overflow: if the write pointer would lap the read pointer,
  * set ads1256_ring_overflow = true and exit.  The outer loop in
@@ -305,6 +310,26 @@ static void run_single_channel(void)
     /* Enter RDATAC - CS stays asserted through the sampling loop */
     cs_assert();
     spi_write_byte(ADS1256_CMD_RDATAC);
+
+    /*
+     * Issue #3 fix: discard the pipeline-startup sample.
+     *
+     * When RDATAC is issued, the ADS1256 holds the result of the conversion
+     * that was already in progress (or completed) at that moment.  Because
+     * wait_drdy() above returned with DRDY already asserted (low), the
+     * acquisition loop below would immediately read that stale result
+     * without waiting for a fresh conversion -- producing random content
+     * in the first one or two PulseView samples.
+     *
+     * Fix: wait for one additional DRDY edge (a fresh, fully-settled
+     * conversion on the correct channel) and read-discard its result before
+     * entering the main acquisition loop.
+     *
+     * Datasheet refs: Section 8.5.4 (RDATAC pipeline behaviour),
+     *                 Figure 30 (MUX/SYNC/WAKEUP/RDATAC timing diagram).
+     */
+    wait_drdy(200000);
+    ads1256_read24_rdatac(); /* discard transition sample */
 
     while (ads1256_core1_run)
     {
