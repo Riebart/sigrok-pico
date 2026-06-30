@@ -161,7 +161,9 @@
 #ifndef ADS1256_CLKIN_HZ
 #define ADS1256_CLKIN_HZ 7680000
 #endif
-// DRATE register value. Default 0xF0 = 30000 SPS (maximum rate).
+// DRATE register value for single-channel RDATAC mode.
+// Default 0xF0 = 30000 SPS (maximum rate). In single-channel mode the chip
+// runs continuously without MUX switching, so 30 kSPS is fully achievable.
 // See ADS1256 datasheet Table 13 for all valid values.
 // Other options: 0xE0=15000SPS, 0xD0=7500SPS, 0xC0=3750SPS,
 //                0xB0=2000SPS, 0xA1=1000SPS, 0x92=500SPS, 0x82=100SPS,
@@ -170,6 +172,20 @@
 // Override at cmake time: -DADS1256_DRATE_REG=0xA1  (for 1000 SPS, etc.)
 #ifndef ADS1256_DRATE_REG
 #define ADS1256_DRATE_REG 0xF0
+#endif
+
+// DRATE register value for multi-channel MUX-cycling mode.
+// Each channel switch requires MUX write + SYNC + WAKEUP before DRDY asserts.
+// ADS1256 datasheet Table 15 shows that only DRATE <= 3750 SPS guarantees
+// full filter settling within 1 DRDY period after a SYNC/WAKEUP event.
+// At higher rates (e.g. 7500 SPS) the filter needs 2 DRDY periods to settle,
+// requiring a sample-discard step after each MUX switch to avoid reading
+// tail data from the previous channel.
+// Default: 0xC0 = 3750 SPS — safe for MUX cycling with no discard logic.
+// Override at cmake time: -DADS1256_DRATE_REG_MULTI=0xD0  (7500 SPS, requires
+// discard-one-sample logic in run_multi_channel if used).
+#ifndef ADS1256_DRATE_REG_MULTI
+#define ADS1256_DRATE_REG_MULTI 0xC0
 #endif
 
 // ---------- Wire protocol: analog encoding ----------
