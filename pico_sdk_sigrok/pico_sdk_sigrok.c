@@ -631,8 +631,27 @@ void send_half(void)
     // Dprintf("a buffers %d %d %d\n\r",dev.abuf0_start,dev.abuf1_start,abuf_start);
     if (dev.a_mask)
     {
-      send_slices_analog(&dev, &(capture_buf[dbuf_start]),
-                         &(capture_buf[abuf_start]));
+#ifdef ADS1256_MODE
+      if (dev.d_mask == 0 && ads1256_multichan)
+      {
+         // Issue #4: Safely and efficiently send contiguous analog bytes
+         uint32_t s_remain = dev.samples_per_half;
+         if ((dev.cont == false) && ((dev.scnt + s_remain) > dev.num_samples)) {
+             s_remain = dev.num_samples - dev.scnt;
+         }
+         uint32_t bytes_to_send = s_remain * dev.a_chan_cnt * ADS1256_A_BYTES;
+         if (bytes_to_send > 0) {
+             my_stdio_usb_out_chars((const char *)&(capture_buf[abuf_start]), bytes_to_send);
+             bytecnt += bytes_to_send;
+         }
+         dev.scnt += s_remain;
+      }
+      else
+#endif
+      {
+        send_slices_analog(&dev, &(capture_buf[dbuf_start]),
+                           &(capture_buf[abuf_start]));
+      }
     }
     else if (d_dma_bps == 0)
     {

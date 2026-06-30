@@ -201,8 +201,6 @@ void ads1256_hw_init(void)
  * ----------------------------------------------------------------------- */
 void ads1256_encode_sample(int32_t raw24, uint8_t out[ADS1256_A_BYTES])
 {
-    if (raw24 < 0)
-        raw24 = 0;
     uint32_t v = (uint32_t)raw24 >> ADS1256_A_RSHIFT;
     /* FIX: MSB first -- out[0] must hold the most-significant 7 bits so that
      * libsigrok's process_slice() reassembly ((b[0]-0x80)<<14 | ...) is correct. */
@@ -291,9 +289,10 @@ static void run_single_channel(void)
     while (ads1256_core1_run)
     {
         /* Wait for DRDY (next conversion complete) */
+        absolute_time_t deadline = make_timeout_time_us(200000);
         while (gpio_get(ADS1256_PIN_DRDY) != 0)
         {
-            if (!ads1256_core1_run)
+            if (!ads1256_core1_run || absolute_time_diff_us(get_absolute_time(), deadline) <= 0)
                 goto done_rdatac;
         }
 

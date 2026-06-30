@@ -189,6 +189,14 @@ int main()
   {
     ecnt++;
 #ifdef ADS1256_MODE
+    // Issue #3: Cleanly catch ring buffer overflow and abort
+    if (ads1256_ring_overflow)
+    {
+      Dprintf("ADS1256 ring buffer overflow! Aborting.\n\r");
+      dev.state = ABORTED;
+      ads1256_ring_overflow = false;
+    }
+
     // Drain ADS1256 single-channel ring buffer when digital is disabled
     if ((dev.state == SENDING || dev.state == DMA_DONE) && dev.d_mask == 0)
     {
@@ -589,10 +597,18 @@ int main()
         // Clear any pending interrupts
         // All dma interrupts go through a common handler so that we can check for
         // overflows etc.
-        dma_channel_set_irq0_enabled(admachan0, true);
-        dma_channel_set_irq0_enabled(pdmachan0, true);
-        dma_channel_set_irq0_enabled(admachan1, true);
-        dma_channel_set_irq0_enabled(pdmachan1, true);
+        if (dev.d_mask > 0)
+        {
+          dma_channel_set_irq0_enabled(pdmachan0, true);
+          dma_channel_set_irq0_enabled(pdmachan1, true);
+        }
+#ifndef ADS1256_MODE
+        if (dev.a_chan_cnt > 0)
+        {
+          dma_channel_set_irq0_enabled(admachan0, true);
+          dma_channel_set_irq0_enabled(admachan1, true);
+        }
+#endif
 
         h0intmask = 0;
         h1intmask = 0;

@@ -19,7 +19,7 @@ int Dprintf(const char *fmt, ...)
 
    memset(&_dstr, 0x00, sizeof(_dstr));
    va_start(argptr, fmt);
-   len = vsprintf(_dstr, fmt, argptr);
+   len = vsnprintf(_dstr, sizeof(_dstr), fmt, argptr);
    va_end(argptr);
 
    if ((len > 0) && (len < 240))
