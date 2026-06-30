@@ -567,14 +567,26 @@ uint32_t send_slices_analog(sr_device_t *d, uint8_t *dbuf, uint8_t *abuf)
     for (char i = 0; i < d->a_chan_cnt; i++)
     {
 #ifdef ADS1256_MODE
-      // ADS1256 uses 3 wire bytes per sample
+      // ADS1256 uses 3 wire bytes per sample.
       if (!ads1256_multichan)
       {
-        // Wait for a sample to be available in ring buffer
-        while (ads1256_ring_rd == ads1256_ring_wr)
+        // Wait until a full 3-byte sample is available in the ring buffer.
+        // Only checking for 1 byte (ring_rd != ring_wr) is not sufficient:
+        // core1 writes enc[0], enc[1], enc[2] one byte at a time, so the
+        // write pointer may have advanced past ring_rd after only enc[0] is
+        // committed.  Reading enc[1] and enc[2] without this check would
+        // consume stale bytes from the previous acquisition, producing a
+        // spurious non-zero first sample even with AIN0 held at GND.
+        // ADS1256_RING_BYTES is statically asserted to be a multiple of
+        // ADS1256_A_BYTES (3), so (wr - rd) mod RING_BYTES is exact.
+        while (1)
         {
-          if (!ads1256_core1_run)
+          uint32_t wr = ads1256_ring_wr;
+          uint32_t avail = (wr - ads1256_ring_rd + ADS1256_RING_BYTES) % ADS1256_RING_BYTES;
+          if (avail >= ADS1256_A_BYTES)
             break;
+          if (!ads1256_core1_run)
+            goto ads1256_ring_done;
           tight_loop_contents();
         }
         txbuf[txbufidx++] = ads1256_ring[ads1256_ring_rd];
@@ -602,6 +614,9 @@ uint32_t send_slices_analog(sr_device_t *d, uint8_t *dbuf, uint8_t *abuf)
     // works well anyway
     check_tx_buf(TX_BUF_THRESH);
   } // for s
+#ifdef ADS1256_MODE
+ads1256_ring_done:
+#endif
   check_tx_buf(1);
 }
 // send_slices_analog
