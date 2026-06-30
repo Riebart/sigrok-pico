@@ -161,14 +161,15 @@
 #ifndef ADS1256_CLKIN_HZ
 #define ADS1256_CLKIN_HZ 7680000
 #endif
-// DRATE register value. 0xA1 = 1000 SPS (see ADS1256 datasheet Table 13)
-// At 1000 SPS: tSETTLE = 1ms, well within USB bandwidth.
-// Other options: 0xF0=30000SPS, 0xE0=15000SPS, 0xD0=7500SPS, 0xC0=3750SPS,
+// DRATE register value. Default 0xF0 = 30000 SPS (maximum rate).
+// See ADS1256 datasheet Table 13 for all valid values.
+// Other options: 0xE0=15000SPS, 0xD0=7500SPS, 0xC0=3750SPS,
 //                0xB0=2000SPS, 0xA1=1000SPS, 0x92=500SPS, 0x82=100SPS,
 //                0x72=60SPS,   0x63=50SPS,   0x53=30SPS,  0x43=25SPS,
 //                0x33=15SPS,   0x23=10SPS,   0x13=5SPS,   0x03=2.5SPS
+// Override at cmake time: -DADS1256_DRATE_REG=0xA1  (for 1000 SPS, etc.)
 #ifndef ADS1256_DRATE_REG
-#define ADS1256_DRATE_REG 0xA1
+#define ADS1256_DRATE_REG 0xF0
 #endif
 
 // ---------- Wire protocol: analog encoding ----------
@@ -242,8 +243,11 @@
 #define TX_BUF_SIZE 260
 // Setting to default value of Raspberry PI debug probe of 115200
 #define UART_BAUD 115200 // 921600
-// This sets the point which we will send data from the txbuf to the usb cdc.
-#define TX_BUF_THRESH 20
+// TX_BUF_THRESH: flush the USB CDC transmit buffer once this many bytes have
+// accumulated. 192 bytes aligns with 3x USB FS 64-byte packets, reducing
+// tud_cdc_write/tud_task/flush overhead by ~10x compared to the old value
+// of 20. Must remain <= TX_BUF_SIZE (260).
+#define TX_BUF_THRESH 192
 
 typedef enum
 {

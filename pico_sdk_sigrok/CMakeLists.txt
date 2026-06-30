@@ -22,6 +22,16 @@ project(pico_sdk_sigrok C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+# ---------------------------------------------------------------------------
+# Default to Release if the caller did not specify a build type.
+# This ensures that builds invoked without -DCMAKE_BUILD_TYPE=... still get
+# full optimisation rather than the SDK's unoptimised default.
+# ---------------------------------------------------------------------------
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (default: Release)" FORCE)
+endif()
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 # ADS1256 compile-time overrides (PICO_MODE 3 only).
 # Pass on the cmake command line, e.g.:
 #   cmake -DADS1256_PGA_GAIN=2 -DADS1256_BUF_ENABLE=1 ..
@@ -49,6 +59,24 @@ add_executable(pico_sdk_sigrok
   pico_sdk_sigrok.c
   sr_device.c
   ads1256.c
+)
+
+# ---------------------------------------------------------------------------
+# Compiler optimisation flags.
+#
+# Release: -O3 for maximum speed (core1 DRDY→SPI→ring loop must fit in
+#          ~33 µs at 30kSPS), with dead-code/data stripping via section GC.
+# Debug:   -O0 -g3 to preserve all variables and call frames.
+#
+# These flags are set explicitly so that the build is correct regardless of
+# whether the SDK or the toolchain would otherwise inject different defaults.
+# ---------------------------------------------------------------------------
+target_compile_options(pico_sdk_sigrok PRIVATE
+    $<$<CONFIG:Release>:-O3 -DNDEBUG -ffunction-sections -fdata-sections>
+    $<$<CONFIG:Debug>:-O0 -g3>
+)
+target_link_options(pico_sdk_sigrok PRIVATE
+    $<$<CONFIG:Release>:-Wl,--gc-sections>
 )
 
 # If we're in a debug mode, then set the enable stdio UART, which will reduce digital channels
