@@ -53,6 +53,16 @@ on:
           - "0"
           - "1"
           - "2"
+          - "3"
+      build_type:
+        description: "Release or debug builds"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - Release
+          - Debug
       pico_sdk_version:
         description: "Pico SDK version tag"
         required: false
@@ -73,11 +83,10 @@ defaults:
 
 env:
   PICO_SDK_VERSION: ${{ github.event.inputs.pico_sdk_version || '2.1.0' }}
-  BUILD_TYPE: Release
 
 jobs:
   build:
-    name: Build (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }})
+    name: Build (${{ matrix.pico_board }}, mode${{ matrix.pico_mode }}, ${{ matrix.build_type }})
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -93,6 +102,10 @@ jobs:
           - "0"
           - "1"
           - "2"
+          - "3"
+        build_type:
+          - Release
+          - Debug
         exclude:
           - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico'   && github.event.inputs.pico_board != '') && 'pico'   || '' }}
           - pico_board: ${{ (github.event.inputs.pico_board != 'all' && github.event.inputs.pico_board != 'pico_w' && github.event.inputs.pico_board != '') && 'pico_w' || '' }}
@@ -100,6 +113,9 @@ jobs:
           - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '0' && github.event.inputs.pico_mode != '') && '0' || '' }}
           - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '1' && github.event.inputs.pico_mode != '') && '1' || '' }}
           - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '2' && github.event.inputs.pico_mode != '') && '2' || '' }}
+          - pico_mode: ${{ (github.event.inputs.pico_mode != 'all' && github.event.inputs.pico_mode != '3' && github.event.inputs.pico_mode != '') && '3' || '' }}
+          - build_type: ${{ (github.event.inputs.build_type != 'all' && github.event.inputs.build_type != 'Release' && github.event.inputs.build_type != '') && 'Release' || '' }}
+          - build_type: ${{ (github.event.inputs.build_type != 'all' && github.event.inputs.build_type != 'Debug' && github.event.inputs.build_type != '') && 'Debug' || '' }}
 
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -171,7 +187,8 @@ jobs:
           BOARD="${{ matrix.pico_board }}"
           MODE="${{ matrix.pico_mode }}"
           DATE=$(date -u +'%Y-%m-%d')
-          BASE="sigrok-pico-${VERSION}-${BOARD}-mode${MODE}-${DATE}"
+          BUILD_TYPE="${{ matrix.build_type }}"
+          BASE="sigrok-pico-${VERSION}-${BOARD}-mode${MODE}-${DATE}-${BUILD_TYPE}"
 
           echo "version=${VERSION}"        >> "$GITHUB_OUTPUT"
           echo "artifact_name=${BASE}"     >> "$GITHUB_OUTPUT"
@@ -185,7 +202,7 @@ jobs:
                 -G "Unix Makefiles" \
                 -DPICO_BOARD=${{ matrix.pico_board }} \
                 -DPICO_MODE=${{ matrix.pico_mode }} \
-                -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+                -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
                 -DPICO_SDK_PATH="${GITHUB_WORKSPACE}/pico-sdk" \
                 -DCMAKE_MODULE_PATH="${GITHUB_WORKSPACE}"
 
