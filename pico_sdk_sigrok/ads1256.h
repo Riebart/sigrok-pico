@@ -167,18 +167,22 @@ void ads1256_hw_init(void);
  * ads1256_encode_sample(raw24, out)
  * Encode a 24-bit two's-complement ADS1256 result into ADS1256_A_BYTES (3)
  * wire bytes for the libsigrok raspberrypi-pico protocol (a_size = 3).
- * Negative values (below AINCOM) are clamped to 0 (single-ended mode).
  *
- * Bit layout:
- *   V = (uint32_t)max(raw24,0) >> ADS1256_A_RSHIFT   (21-bit unsigned)
- *   out[0] = 0x80 | ( V        & 0x7F)   bits  6..0
+ * Negative values (below AINCOM=AGND) are clamped to 0: all channels are
+ * single-ended and cannot produce valid negative readings.  Without the
+ * clamp, a sign-extended negative noise sample cast to uint32_t wraps to
+ * near 0xFFFFFFFF and encodes as near full-scale.
+ *
+ * Wire encoding is LSB-first, matching libsigrok process_slice():
+ *   tmp32  =  buf[0] - 0x80           (bits  6..0,  shift  0)
+ *   tmp32 += (buf[1] - 0x80) << 7    (bits 13..7,  shift  7)
+ *   tmp32 += (buf[2] - 0x80) << 14   (bits 20..14, shift 14)
+ *
+ * Bit layout after clamp and right-shift by ADS1256_A_RSHIFT (3):
+ *   V = (uint32_t)raw24 >> 3           (21-bit unsigned, range 0..0x1FFFFF)
+ *   out[0] = 0x80 | ( V        & 0x7F)   bits  6..0  (least significant)
  *   out[1] = 0x80 | ((V >>  7) & 0x7F)   bits 13..7
- *   out[2] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14
- *
- * The scale and offset reported by the 'a' command are computed from
- * ADS1256_PGA_GAIN and ADS1256_BUF_ENABLE in sr_device.h:
- *   ADS1256_SCALE_UV = (ADS1256_VREF_UV / PGA_GAIN) / 2^20  [uV/count]
- *   ADS1256_OFFSET_UV = 0
+ *   out[2] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14 (most significant)
  */
 void ads1256_encode_sample(int32_t raw24, uint8_t out[ADS1256_A_BYTES]);
 

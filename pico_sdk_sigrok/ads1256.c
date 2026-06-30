@@ -22,6 +22,10 @@
  *
  *   libsigrok src/hardware/raspberrypi-pico/protocol.c:
  *     process_slice() multi-byte analog decoding (a_size = 3)
+ *     Reconstruction: tmp32  = buf[0]-0x80
+ *                     tmp32 += (buf[1]-0x80) << 7
+ *                     tmp32 += (buf[2]-0x80) << 14
+ *     => buf[0] is the LEAST-significant 7 bits (LSB-first wire order).
  */
 
 // Guard is defined in the header includes.
@@ -177,20 +181,25 @@ void ads1256_hw_init(void)
  * Encodes a 24-bit two's-complement ADS1256 result into 3 wire bytes.
  *
  * Single-ended only (AINCOM = AGND): negative raw values indicate noise
- * below ground reference; clamp to 0 before encoding.
+ * below ground reference; clamped to 0 before encoding.
  *
- * Encoding (MSB first, matching libsigrok process_slice() expectations):
- *   V = (uint32_t) max(raw24, 0) >> ADS1256_A_RSHIFT   [21-bit unsigned]
- *   out[0] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14  (most significant)
- *   out[1] = 0x80 | ((V >>  7) & 0x7F)   bits 13..7
- *   out[2] = 0x80 | ( V        & 0x7F)   bits  6..0   (least significant)
+ * Wire encoding (LSB-first, matching libsigrok process_slice()):
+ *   1. Clamp: if raw24 < 0, raw24 = 0
+ *   2. Shift:  V = (uint32_t)raw24 >> ADS1256_A_RSHIFT   [21-bit unsigned]
+ *   3. Pack:
+ *        out[0] = 0x80 | ( V        & 0x7F)   bits  6..0  (least significant)
+ *        out[1] = 0x80 | ((V >>  7) & 0x7F)   bits 13..7
+ *        out[2] = 0x80 | ((V >> 14) & 0x7F)   bits 20..14 (most significant)
  *
  * The 0x80 framing bit is required by the libsigrok raspberrypi-pico
- * protocol: process_slice() reads (buffer[rdptr] - 0x80) for each byte,
- * so all analog bytes must be >= 0x80.
+ * protocol: process_slice() subtracts 0x80 from each byte, so all
+ * analog bytes must have bit 7 set.
  *
- * libsigrok reassembles as: (b[0]-0x80)<<14 | (b[1]-0x80)<<7 | (b[2]-0x80)
- * so out[0] MUST carry the most-significant 7 bits.
+ * libsigrok process_slice() reconstructs as:
+ *   tmp32  =  buf[0] - 0x80           (shift  0 -> bits  6..0)
+ *   tmp32 += (buf[1] - 0x80) << 7    (shift  7 -> bits 13..7)
+ *   tmp32 += (buf[2] - 0x80) << 14   (shift 14 -> bits 20..14)
+ * so out[0] MUST carry the least-significant 7 bits.
  *
  * Scale reported by the 'a' command (sr_device.c):
  *   ADS1256_SCALE_UV  = (ADS1256_VREF_UV / ADS1256_PGA_GAIN) / 2^20
@@ -201,12 +210,20 @@ void ads1256_hw_init(void)
  * ----------------------------------------------------------------------- */
 void ads1256_encode_sample(int32_t raw24, uint8_t out[ADS1256_A_BYTES])
 {
+    /* Clamp negative values to 0: single-ended channels cannot go below AGND.
+     * Without this clamp, a sign-extended negative value cast to uint32_t
+     * wraps to near 0xFFFFFFFF and encodes as near full-scale. */
+    if (raw24 < 0)
+        raw24 = 0;
+
     uint32_t v = (uint32_t)raw24 >> ADS1256_A_RSHIFT;
-    /* FIX: MSB first -- out[0] must hold the most-significant 7 bits so that
-     * libsigrok's process_slice() reassembly ((b[0]-0x80)<<14 | ...) is correct. */
-    out[0] = 0x80 | ((v >> 14) & 0x7F); /* bits 20..14 */
-    out[1] = 0x80 | ((v >> 7) & 0x7F);  /* bits 13..7  */
-    out[2] = 0x80 | (v & 0x7F);         /* bits  6..0  */
+
+    /* LSB-first: out[0] holds the least-significant 7 bits so that
+     * libsigrok's process_slice() accumulation is correct:
+     *   tmp32 += (buf[a] - 0x80) << (7*a)  for a = 0, 1, 2 */
+    out[0] = 0x80 | ( v        & 0x7F); /* bits  6..0  */
+    out[1] = 0x80 | ((v >>  7) & 0x7F); /* bits 13..7  */
+    out[2] = 0x80 | ((v >> 14) & 0x7F); /* bits 20..14 */
 }
 
 /* -----------------------------------------------------------------------
