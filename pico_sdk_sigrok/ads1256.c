@@ -15,6 +15,7 @@
  *     Figure 29      - Initialization sequence
  *     Figure 33      - Pipelined channel multiplexing
  *     Table 13       - DRATE register values
+ *     Table 15       - Settling time vs DRATE after SYNC/WAKEUP
  *     Table 23       - Register map
  *     Table 24       - SPI command bytes
  *     Table 25       - STATUS register
@@ -100,7 +101,9 @@ static inline void spi_read_bytes(uint8_t *buf, size_t count)
  *        STATUS = ACAL | (BUFEN if ADS1256_BUF_ENABLE)
  *        MUX    = AIN0 vs AINCOM (default; will be updated before sampling)
  *        ADCON  = PGA encoding for ADS1256_PGA_GAIN (no CLK out, no SDCS)
- *        DRATE  = ADS1256_DRATE_REG
+ *        DRATE  = ADS1256_DRATE_REG  (single-channel rate; multi-channel
+ *                 mode re-programs this to ADS1256_DRATE_REG_MULTI before
+ *                 entering run_multi_channel() and restores it on exit)
  *   5. Send SELFCAL (offset + gain self-calibration).
  *   6. Wait DRDY low (calibration complete, timeout 1 s).
  * ----------------------------------------------------------------------- */
@@ -157,7 +160,7 @@ void ads1256_hw_init(void)
     spi_write_byte(status_val);        /* STATUS */
     spi_write_byte(mux_val);           /* MUX    */
     spi_write_byte(adcon_val);         /* ADCON  */
-    spi_write_byte(ADS1256_DRATE_REG); /* DRATE */
+    spi_write_byte(ADS1256_DRATE_REG); /* DRATE  (single-channel rate) */
     cs_deassert();
 
     /*
@@ -356,6 +359,13 @@ done_rdatac:
  * Pipelined multi-channel MUX cycling (ADS1256 datasheet Figure 33).
  * Digital channels are NOT sampled in this mode.
  *
+ * DRATE is re-programmed to ADS1256_DRATE_REG_MULTI (default 0xC0,
+ * 3750 SPS) on entry and restored to ADS1256_DRATE_REG on exit.
+ * This is required because Table 15 of the ADS1256 datasheet specifies
+ * that only rates <= 3750 SPS guarantee full filter settling within a
+ * single DRDY period after a SYNC/WAKEUP event.  At higher rates a
+ * discard step would be needed after each MUX switch.
+ *
  * While channel[cur] conversion is in progress, we program MUX for
  * channel[next] and issue SYNC+WAKEUP to start its conversion.  When
  * DRDY asserts, channel[cur]'s result is ready; we read it with RDATA.
@@ -376,6 +386,25 @@ static void run_multi_channel(void)
     }
     if (nchan == 0)
         return;
+
+    /*
+     * Switch DRATE to the multi-channel rate and recalibrate.
+     * ads1256_hw_init() left DRATE = ADS1256_DRATE_REG (30 kSPS default).
+     * Running MUX cycling at that rate violates Table 15 settling; we must
+     * drop to ADS1256_DRATE_REG_MULTI (3750 SPS default) before the first
+     * SYNC/WAKEUP.  SELFCAL is mandatory after any DRATE change
+     * (datasheet section 8.4.5).
+     */
+    cs_assert();
+    spi_write_byte(ADS1256_CMD_WREG | ADS1256_REG_DRATE);
+    spi_write_byte(0);                       /* count - 1 = 0 */
+    spi_write_byte(ADS1256_DRATE_REG_MULTI); /* multi-channel rate */
+    cs_deassert();
+
+    cs_assert();
+    spi_write_byte(ADS1256_CMD_SELFCAL);
+    cs_deassert();
+    wait_drdy(1000000); /* up to 1 s for calibration at the lower rate */
 
     extern uint8_t *capture_buf;
     uint8_t *buf_ptrs[2] = {
@@ -409,7 +438,7 @@ static void run_multi_channel(void)
     cs_deassert();
 
     if (!wait_drdy(200000))
-        return;
+        goto done_multi;
 
     uint8_t cur = 0; /* index into chans[] for the result being read */
 
@@ -471,6 +500,23 @@ static void run_multi_channel(void)
 
         cur = next;
     }
+
+done_multi:
+    /*
+     * Restore DRATE to the single-channel rate and recalibrate so that
+     * a subsequent single-channel RDATAC run uses the correct rate without
+     * requiring a full ads1256_hw_init() call.
+     */
+    cs_assert();
+    spi_write_byte(ADS1256_CMD_WREG | ADS1256_REG_DRATE);
+    spi_write_byte(0);
+    spi_write_byte(ADS1256_DRATE_REG); /* restore single-channel rate */
+    cs_deassert();
+
+    cs_assert();
+    spi_write_byte(ADS1256_CMD_SELFCAL);
+    cs_deassert();
+    wait_drdy(1000000);
 }
 
 /* -----------------------------------------------------------------------

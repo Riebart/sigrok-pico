@@ -48,6 +48,9 @@ endif()
 if(DEFINED ADS1256_DRATE_REG)
     add_compile_definitions(ADS1256_DRATE_REG=${ADS1256_DRATE_REG})
 endif()
+if(DEFINED ADS1256_DRATE_REG_MULTI)
+    add_compile_definitions(ADS1256_DRATE_REG_MULTI=${ADS1256_DRATE_REG_MULTI})
+endif()
 
 #See https://github.com/pico-coder/sigrok-pico/pull/63/
 #setting this allows the DTR to be ignored.  In addition to this, the use of
